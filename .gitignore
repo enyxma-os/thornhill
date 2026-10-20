@@ -6,7 +6,6 @@ result-*
 # Rust / Cargo
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # SQLite local runtime data
 *.db
