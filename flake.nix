@@ -58,7 +58,7 @@
           };
         };
       }) // {
-        # Evrensel NixOS Modülü
+        # Evrensel NixOS Modülü (system düzeyi kullanıcı servisi)
         nixosModules.default = { config, lib, pkgs, ... }:
           let
             cfg = config.services.thornhill;
@@ -66,22 +66,41 @@
           {
             options.services.thornhill = {
               enable = lib.mkEnableOption "Enyxma Thornhill Cognitive Daemon";
+              package = lib.mkOption {
+                type = lib.types.package;
+                default = self.packages.${pkgs.system}.default;
+                description = "Thornhill paketi (varsayılan: bu flake'in çıktısı)";
+              };
             };
 
             config = lib.mkIf cfg.enable {
+              # Kullanıcı başına sistemd servisi: her oturum açan kullanıcı için
+              # ayrı thornhilld (RFC-001: kullanıcı başına daemon modeli).
               systemd.user.services.thornhilld = {
                 description = "Enyxma Thornhill Cognitive Daemon";
                 wantedBy = [ "default.target" ];
+                # Aksiyom 2 destek: servisi login hedefine bağla
+                partOf = [ "graphical-session.target" ];
                 serviceConfig = {
-                  ExecStart = "${self.packages.${pkgs.system}.default}/bin/thornhilld";
+                  ExecStart = "${cfg.package}/bin/thornhilld";
                   Restart = "on-failure";
                   RestartSec = "2s";
+                  # Sertleştirme (§8 güvenlik modeliyle uyumlu)
+                  PrivateTmp = true;
+                  NoNewPrivileges = true;
+                  ProtectSystem = "strict";
+                  ProtectHome = "read-only";
+                  ReadWritePaths = [ "%t/thornhill" "%h/.local/state/thornhill" ];
+                };
+                environment = {
+                  XDG_RUNTIME_DIR = "%t";
+                  XDG_STATE_HOME = "%h/.local/state";
                 };
               };
             };
           };
 
-        # Evrensel Home Manager Modülü
+        # Evrensel Home Manager Modülü (kullanıcı düzeyi + shell hook entegrasyonu)
         homeManagerModules.default = { config, lib, pkgs, ... }:
           let
             cfg = config.services.thornhill;
@@ -89,24 +108,53 @@
           {
             options.services.thornhill = {
               enable = lib.mkEnableOption "Enyxma Thornhill Cognitive Daemon";
-            };
-
-            config = lib.mkIf cfg.enable {
-              systemd.user.services.thornhilld = {
-                Unit = {
-                  Description = "Enyxma Thornhill Cognitive Daemon";
-                  PartOf = [ "default.target" ];
-                };
-                Service = {
-                  ExecStart = "${self.packages.${pkgs.system}.default}/bin/thornhilld";
-                  Restart = "on-failure";
-                  RestartSec = "2s";
-                };
-                Install = {
-                  WantedBy = [ "default.target" ];
-                };
+              package = lib.mkOption {
+                type = lib.types.package;
+                default = self.packages.${pkgs.system}.default;
+                description = "Thornhill paketi";
+              };
+              # Shell hook: zsh veya bash rc'ye source satırı ekler (§4.1)
+              enableShellHook = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Kabuk hata kancasını (thornhill.sh) etkileşimli kabuğa bağla.
+                  Yalnız exit_code != 0 iken yazar; Thornhill kapalıysa sessizce pas geçer.
+                '';
               };
             };
+
+            config = lib.mkMerge [
+              (lib.mkIf cfg.enable {
+                systemd.user.services.thornhilld = {
+                  Unit = {
+                    Description = "Enyxma Thornhill Cognitive Daemon";
+                    PartOf = [ "graphical-session.target" ];
+                  };
+                  Service = {
+                    ExecStart = "${cfg.package}/bin/thornhilld";
+                    Restart = "on-failure";
+                    RestartSec = "2s";
+                    NoNewPrivileges = true;
+                    PrivateTmp = true;
+                  };
+                  Install = {
+                    WantedBy = [ "default.target" ];
+                  };
+                };
+              })
+              # Shell hook entegrasyonu: HM üzerinden zsh/bash'e source satırı
+              (lib.mkIf (cfg.enable && cfg.enableShellHook) {
+                programs.zsh.initExtra = lib.mkOrder 1200 ''
+                  # Thornhill duyusal kancası (yalnız hata anında yazar)
+                  source ${cfg.package}/share/thornhill/shell-hook/thornhill.sh
+                '';
+                programs.bash.initExtra = lib.mkOrder 1200 ''
+                  # Thornhill duyusal kancası (yalnız hata anında yazar)
+                  source ${cfg.package}/share/thornhill/shell-hook/thornhill.sh
+                '';
+              })
+            ];
           };
       };
 }
