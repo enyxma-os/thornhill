@@ -1,0 +1,28 @@
+# Nix
+result
+result-*
+.direnv/
+
+# Rust / Cargo
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# SQLite local runtime data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Sockets and Runtime
+*.sock
+/run/
+
+# Editor & OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
