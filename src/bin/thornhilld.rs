@@ -2,16 +2,24 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thornhill::bus::BusServer;
+use thornhill::graph::GraphStore;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
 use tracing::{info, warn};
 
 #[derive(Parser, Debug)]
-#[command(name = "thornhilld", about = "Enyxma Thornhill Cognitive Daemon (RFC-001)")]
+#[command(
+    name = "thornhilld",
+    about = "Enyxma Thornhill Cognitive Daemon (RFC-001)"
+)]
 struct Args {
     /// Özel UDS soket yolu (varsayılan: $XDG_RUNTIME_DIR/thornhill/thornhill.sock)
     #[arg(short, long)]
     socket: Option<PathBuf>,
+
+    /// Özel graf veritabanı yolu (varsayılan: $XDG_STATE_HOME/thornhill/graph.db)
+    #[arg(short, long)]
+    db: Option<PathBuf>,
 
     /// Ayrıntılı loglama (debug)
     #[arg(short, long)]
@@ -19,7 +27,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
 
     let default_filter = if args.verbose { "debug" } else { "info" };
@@ -31,12 +39,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     info!("============================================================");
-    info!("👁️  Enyxma Thornhill Daemon v0.1.0-rfc001");
+    info!("👁️  Enyxma Thornhill Daemon v0.1.0 (Faz 1, Adım 3: graf dahil)");
     info!("   PID: {}", std::process::id());
     info!("   Manifesto: Bir uzuv sorulunca çalışır. Thornhill hiç sorulmadığı halde bakar.");
     info!("============================================================");
 
-    let server = Arc::new(BusServer::new(args.socket));
+    // RFC-001 §6: Nedensellik grafiği (SQLite WAL). Daemon içinde açılır.
+    let graph = match GraphStore::open(args.db) {
+        Ok(g) => Arc::new(g),
+        Err(e) => {
+            warn!("Graf deposu açılamadı: {}", e);
+            return Err(e);
+        }
+    };
+
+    let server = Arc::new(BusServer::new(args.socket, graph));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // SIGINT ve SIGTERM yakalama

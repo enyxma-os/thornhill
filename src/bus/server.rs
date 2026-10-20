@@ -1,3 +1,4 @@
+use crate::graph::GraphStore;
 use crate::protocol::{CanonicalEvent, SubFilter, WireRequest, WireResponse};
 use futures_util::{SinkExt, StreamExt};
 use std::fs;
@@ -12,7 +13,9 @@ use tracing::{debug, error, info, warn};
 /// UDS Soket yolunu çözümler ($XDG_RUNTIME_DIR/thornhill/thornhill.sock)
 pub fn resolve_socket_path() -> PathBuf {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        PathBuf::from(runtime_dir).join("thornhill").join("thornhill.sock")
+        PathBuf::from(runtime_dir)
+            .join("thornhill")
+            .join("thornhill.sock")
     } else {
         let uid = unsafe { libc::getuid() };
         PathBuf::from(format!("/run/user/{}/thornhill/thornhill.sock", uid))
@@ -22,16 +25,18 @@ pub fn resolve_socket_path() -> PathBuf {
 pub struct BusServer {
     socket_path: PathBuf,
     event_tx: broadcast::Sender<CanonicalEvent>,
+    graph: Arc<GraphStore>,
 }
 
 impl BusServer {
-    pub fn new(socket_path: Option<PathBuf>) -> Self {
+    pub fn new(socket_path: Option<PathBuf>, graph: Arc<GraphStore>) -> Self {
         let path = socket_path.unwrap_or_else(resolve_socket_path);
         let (event_tx, _) = broadcast::channel(1024);
 
         Self {
             socket_path: path,
             event_tx,
+            graph,
         }
     }
 
@@ -55,7 +60,10 @@ impl BusServer {
     }
 
     /// Daemon ana dinleme döngüsünü başlatır.
-    pub async fn run(self: Arc<Self>, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) -> std::io::Result<()> {
+    pub async fn run(
+        self: Arc<Self>,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> std::io::Result<()> {
         Self::prepare_socket(&self.socket_path)?;
 
         let listener = UnixListener::bind(&self.socket_path)?;
@@ -88,14 +96,20 @@ impl BusServer {
     }
 
     /// Tekil istemci bağlantısını işler ve RFC-001 §8.4 (SO_PEERCRED) kontrolünü uygular.
-    async fn handle_connection(&self, stream: UnixStream) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle_connection(
+        &self,
+        stream: UnixStream,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // RFC-001 §8.4: SO_PEERCRED yetki kontrolü
         let my_uid = unsafe { libc::getuid() };
         match stream.peer_cred() {
             Ok(cred) => {
                 let peer_uid = cred.uid();
                 if peer_uid != my_uid {
-                    warn!("Güvenlik İhlali: Sokete yabancı UID bağlandı! Beklenen: {}, Gelen: {}", my_uid, peer_uid);
+                    warn!(
+                        "Güvenlik İhlali: Sokete yabancı UID bağlandı! Beklenen: {}, Gelen: {}",
+                        my_uid, peer_uid
+                    );
                     return Ok(());
                 }
             }
@@ -130,17 +144,28 @@ impl BusServer {
                     }
                 }
 
-                // Abone olunan olayları istemciye fırlat (EventNotification / ChipPush)
-                Ok(event) = sub_rx.recv(), if sub_filter.is_some() => {
-                    if let Some(ref filter) = sub_filter {
-                        if filter.matches(&event) {
-                            let notification = WireResponse::event_push(event);
-                            let json = serde_json::to_string(&notification)?;
-                            if let Err(e) = framed_write.send(json).await {
-                                debug!("Aboneye bildirim gönderilemedi: {}", e);
-                                break;
+                // Abone olunan olayları istemciye fırlat.
+                // NOT: Lagged hatası asla bekle-düşür (busy-loop) üretmez;
+                // uyarılanır ve dinleme sürer (RFC-001 §4.2 drop_policy: coalesce).
+                res = sub_rx.recv(), if sub_filter.is_some() => {
+                    match res {
+                        Ok(event) => {
+                            if let Some(ref filter) = sub_filter {
+                                if filter.matches(&event) {
+                                    let notification = WireResponse::event_push(event);
+                                    let json = serde_json::to_string(&notification)?;
+                                    if let Err(e) = framed_write.send(json).await {
+                                        debug!("Aboneye bildirim gönderilemedi: {}", e);
+                                        break;
+                                    }
+                                }
                             }
                         }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("Abone {} olayı kaçırdı (coalesce politikası uyarınca atıldı)", n);
+                            // break YOK: dinleme devam eder.
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
             }
@@ -150,7 +175,11 @@ impl BusServer {
     }
 
     /// Gelen NDJSON isteğini ayrıştırır ve uygun yanıtı üretir.
-    async fn dispatch_request(&self, line: &str, sub_filter: &mut Option<SubFilter>) -> WireResponse {
+    async fn dispatch_request(
+        &self,
+        line: &str,
+        sub_filter: &mut Option<SubFilter>,
+    ) -> WireResponse {
         let req: WireRequest = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
@@ -161,35 +190,51 @@ impl BusServer {
         match req {
             WireRequest::Hello { req, client, v } => {
                 debug!("İstemci tokalaşması: {} (v{})", client, v);
-                WireResponse::ok(req, serde_json::json!({
-                    "v": 1,
-                    "daemon": "thornhilld",
-                    "features": ["sensory", "graph", "chip", "s1_reflex"],
-                    "status": "ready"
-                }))
+                WireResponse::ok(
+                    req,
+                    serde_json::json!({
+                        "v": 1,
+                        "daemon": "thornhilld",
+                        "features": ["sensory", "graph", "chip", "s1_reflex"],
+                        "status": "ready"
+                    }),
+                )
             }
-            WireRequest::Ping { req } => {
-                WireResponse::ok(req, serde_json::json!({ "pong": true }))
-            }
+            WireRequest::Ping { req } => WireResponse::ok(req, serde_json::json!({ "pong": true })),
             WireRequest::Event { req, event } => {
                 let id = event.id.clone();
-                debug!("Kanonik olay alındı: {}/{} [{}]", event.src, event.kind, id);
-                // Canlı abonelere ilet
+                // Önce kalıcılaştır (tek gerçek kaynak), sonra canlı abonelere yayınla.
+                if let Err(e) = self.graph.append(&event) {
+                    error!("Olay grafe yazılamadı: {}", e);
+                    return WireResponse::err(req, format!("Olay kalıcılaştırılamadı: {}", e));
+                }
+                debug!("Kanonik olay grafe yazıldı ve yayınlandı: {}", id);
                 let _ = self.event_tx.send(event);
                 WireResponse::ok(req, serde_json::json!({ "id": id }))
             }
             WireRequest::Sub { req, filter } => {
-                debug!("Abone kaydı yapıldı: kinds={:?}, srcs={:?}", filter.kinds, filter.srcs);
+                debug!(
+                    "Abone kaydı yapıldı: kinds={:?}, srcs={:?}",
+                    filter.kinds, filter.srcs
+                );
                 *sub_filter = Some(filter);
                 WireResponse::ok(req, serde_json::json!({ "subscribed": true }))
             }
-            WireRequest::Query { req, sql } => {
-                // SQLite grafiği fazında burası doğrudan graf motoruna bağlanacak
-                WireResponse::ok(req, serde_json::json!({ "rows": [], "query": sql }))
-            }
-            WireRequest::ChipAct { req, chip_id, confirm } => {
+            // RFC-001 §7.1: yapılandırılmış sorgu; ham SQL tel üzerinden kabul edilmez.
+            WireRequest::Query { req, q, limit } => match self.graph.query(&q, limit) {
+                Ok(rows) => WireResponse::ok(req, serde_json::json!({ "rows": rows })),
+                Err(e) => WireResponse::err(req, format!("Graf sorgusu hatası: {}", e)),
+            },
+            WireRequest::ChipAct {
+                req,
+                chip_id,
+                confirm,
+            } => {
                 info!("Action Chip eylemi alındı: {} (onay={})", chip_id, confirm);
-                WireResponse::ok(req, serde_json::json!({ "dispatched": true, "chip_id": chip_id }))
+                WireResponse::ok(
+                    req,
+                    serde_json::json!({ "dispatched": true, "chip_id": chip_id }),
+                )
             }
         }
     }

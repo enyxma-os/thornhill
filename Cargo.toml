@@ -17,6 +17,9 @@ ulid = "1.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 libc = "0.2"
+# RFC-001 §6: Nedensellik grafiği deposu. "bundled" özelliği SQLite'ı derleyerek
+# sistem sqlite'a bağım(lılığ)ı kaldırır; Nix sandbox derlemesinde en az sorun çıkaran seçenek.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [[bin]]
 name = "thornhilld"

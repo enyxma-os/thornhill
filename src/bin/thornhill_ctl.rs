@@ -5,7 +5,10 @@ use thornhill::bus::BusClient;
 use thornhill::protocol::{CanonicalEvent, SubFilter, WireRequest, WireResponse};
 
 #[derive(Parser, Debug)]
-#[command(name = "thornhill-ctl", about = "Enyxma Thornhill Kontrol ve Enjeksiyon Aracı")]
+#[command(
+    name = "thornhill-ctl",
+    about = "Enyxma Thornhill Kontrol ve Enjeksiyon Aracı"
+)]
 struct Cli {
     /// Özel UDS soket yolu
     #[arg(short, long)]
@@ -38,7 +41,11 @@ enum Commands {
         subject: String,
 
         /// Kaynak bağlamı (JSON formatında)
-        #[arg(short, long, default_value = r#"{"exit_code": 101, "cmd": "cargo build"}"#)]
+        #[arg(
+            short,
+            long,
+            default_value = r#"{"exit_code": 101, "cmd": "cargo build"}"#
+        )]
         ctx: String,
 
         /// Güven skoru (0.0 - 1.0)
@@ -55,6 +62,17 @@ enum Commands {
         /// Filtrelenecek kaynaklar (örn: shell, hyprland)
         #[arg(short, long)]
         srcs: Vec<String>,
+    },
+
+    /// Graf sorgusu (RFC-001 §7.1: yapılandırılmış, salt-okunur)
+    Query {
+        /// Sorgu türü: "recent" (son olaylar) | "causal" (nedensellik kenarları)
+        #[arg(short, long, default_value = "recent")]
+        q: String,
+
+        /// En fazla kaç kayıt
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
     },
 }
 
@@ -104,14 +122,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
 
             let resp = client.call(&req).await?;
-            println!("✅ Sentetik olay başarıyla enjekte edildi!");
+            println!("✅ Sentetik olay başarıyla enjekte edildi (grafe yazıldı)!");
             println!("   ID:  {}", event_id);
             println!("   TS:  {}", event_ts);
             println!("   Yanıt: {}", resp);
         }
         Commands::Listen { kinds, srcs } => {
             let filter = SubFilter { kinds, srcs };
-            println!("🎧 Thornhill Bus akışı dinleniyor (Ctrl+C ile çıkış)... Filtre: {:?}", filter);
+            println!(
+                "🎧 Thornhill Bus akışı dinleniyor (Ctrl+C ile çıkış)... Filtre: {:?}",
+                filter
+            );
             client.subscribe(filter).await?;
 
             while let Some(msg_res) = client.next_message().await {
@@ -132,6 +153,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 }
             }
+        }
+        Commands::Query { q, limit } => {
+            let req = WireRequest::Query {
+                req: "query_1".to_string(),
+                q,
+                limit,
+            };
+            let resp = client.call(&req).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
         }
     }
 
