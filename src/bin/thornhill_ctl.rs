@@ -22,55 +22,39 @@ struct Cli {
 enum Commands {
     /// Daemon canlılık yoklaması ve gecikme ölçümü
     Ping,
-
     /// Daemon durum ve özelliklerini listele
     Status,
-
-    /// Sentetik kanonik olay enjekte et (Test ve S1 doğrulaması için)
+    /// Sentetik kanonik olay enjekte et (S1'i tetikler)
     Inject {
-        /// Olay kaynağı (shell, hyprland, git, udev, user vb.)
         #[arg(short, long, default_value = "shell")]
         src: String,
-
-        /// Olay türü (örn: cmd.done, win.focus, repo.enter)
         #[arg(short, long, default_value = "cmd.done")]
         kind: String,
-
-        /// Olay öznesi (pid, dosya yolu, pencere sınıfı)
         #[arg(long, default_value = "test-subject")]
         subject: String,
-
-        /// Kaynak bağlamı (JSON formatında)
         #[arg(
             short,
             long,
             default_value = r#"{"exit_code": 101, "cmd": "cargo build"}"#
         )]
         ctx: String,
-
-        /// Güven skoru (0.0 - 1.0)
         #[arg(long, default_value_t = 1.0)]
         conf: f64,
     },
-
-    /// Canlı olay akışını dinle (Subscriber)
+    /// Canlı olay + çip akışını dinle (Subscriber)
     Listen {
-        /// Filtrelenecek olay türleri (örn: cmd.*, win.focus)
         #[arg(short, long)]
         kinds: Vec<String>,
-
-        /// Filtrelenecek kaynaklar (örn: shell, hyprland)
         #[arg(short, long)]
         srcs: Vec<String>,
+        /// S1 çiplerini de dinle (chip.push)
+        #[arg(long, default_value_t = true)]
+        chips: bool,
     },
-
     /// Graf sorgusu (RFC-001 §7.1: yapılandırılmış, salt-okunur)
     Query {
-        /// Sorgu türü: "recent" (son olaylar) | "causal" (nedensellik kenarları)
         #[arg(short, long, default_value = "recent")]
         q: String,
-
-        /// En fazla kaç kayıt
         #[arg(long, default_value_t = 50)]
         limit: u32,
     },
@@ -114,23 +98,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             let event = CanonicalEvent::new(src, kind, subject, ctx_val).with_confidence(conf);
             let event_id = event.id.clone();
-            let event_ts = event.ts;
 
             let req = WireRequest::Event {
                 req: "inject_1".to_string(),
                 event,
             };
-
             let resp = client.call(&req).await?;
-            println!("✅ Sentetik olay başarıyla enjekte edildi (grafe yazıldı)!");
+            println!("✅ Olay enjekte edildi (graf + S1 değerlendirmesi)!");
             println!("   ID:  {}", event_id);
-            println!("   TS:  {}", event_ts);
             println!("   Yanıt: {}", resp);
         }
-        Commands::Listen { kinds, srcs } => {
-            let filter = SubFilter { kinds, srcs };
+        Commands::Listen { kinds, srcs, chips } => {
+            let filter = SubFilter { kinds, srcs, chips };
             println!(
-                "🎧 Thornhill Bus akışı dinleniyor (Ctrl+C ile çıkış)... Filtre: {:?}",
+                "🎧 Thornhill akışı dinleniyor (Ctrl+C ile çıkış)... chips={}. Filtre: {:?}",
+                if chips { "açık" } else { "kapalı" },
                 filter
             );
             client.subscribe(filter).await?;
@@ -144,9 +126,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         );
                         println!("     ctx: {}", event.ctx);
                     }
-                    Ok(other) => {
-                        println!("<<< {:?}", other);
+                    Ok(WireResponse::ChipPush { op, chip }) => {
+                        if chips {
+                            println!("[{}] {} | {}", op, chip.id, chip.title);
+                            println!("     why: {}", chip.why);
+                            println!("     çipler: {}", chip.labels.join(" | "));
+                            println!("     ttl: {} ms, conf: {:.2}", chip.ttl_ms, chip.conf);
+                        }
                     }
+                    Ok(other) => println!("<<< {:?}", other),
                     Err(e) => {
                         eprintln!("Akış hatası: {}", e);
                         break;
