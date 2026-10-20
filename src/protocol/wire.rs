@@ -35,13 +35,16 @@ pub enum WireRequest {
         #[serde(default = "default_limit")]
         limit: u32,
     },
-    /// RFC-001 §7.2: Action Chip onay/ret
+    /// RFC-001 §7.2: Action Chip onay/ret.
+    /// `action_label` hangi eylemin yürütüleceğini seçer (yoksa ilk eylem).
     #[serde(rename = "chip.act")]
     ChipAct {
         #[serde(default)]
         req: String,
         chip_id: String,
         confirm: bool,
+        #[serde(default)]
+        action_label: Option<String>,
     },
 }
 
@@ -127,10 +130,14 @@ pub enum WireResponse {
         req: Option<String>,
         error: String,
     },
-    /// Canlı olay akışı bildirimi
-    EventNotification { op: String, event: CanonicalEvent },
-    /// Canlı Action Chip bildirimi (§7.2)
-    ChipPush { op: String, chip: ActionChip },
+    EventNotification {
+        op: String,
+        event: CanonicalEvent,
+    },
+    ChipPush {
+        op: String,
+        chip: ActionChip,
+    },
 }
 
 impl WireResponse {

@@ -58,6 +58,19 @@ enum Commands {
         #[arg(long, default_value_t = 50)]
         limit: u32,
     },
+    /// Action Chip eylemini onayla veya önizle (§8.5 risk merdiveni)
+    ChipAct {
+        /// Çip kimliği (örn: chip_01M5...)
+        chip_id: String,
+
+        /// Eylem etiketi (boşsa ilk eylem seçilir)
+        #[arg(short, long)]
+        action: Option<String>,
+
+        /// Eylemi kesin olarak onayla (hold-to-confirm)
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+    },
 }
 
 #[tokio::main]
@@ -128,10 +141,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                     Ok(WireResponse::ChipPush { op, chip }) => {
                         if chips {
-                            println!("[{}] {} | {}", op, chip.id, chip.title);
-                            println!("     why: {}", chip.why);
-                            println!("     çipler: {}", chip.labels.join(" | "));
-                            println!("     ttl: {} ms, conf: {:.2}", chip.ttl_ms, chip.conf);
+                            println!("\n⚡ [{}] {} | {}", op, chip.id, chip.title);
+                            println!("     why:     {}", chip.why);
+                            println!("     trigger: {}", chip.trigger);
+                            println!("     çipler:  {}", chip.labels.join(" | "));
+                            println!("     ttl:     {} ms, conf: {:.2}", chip.ttl_ms, chip.conf);
                         }
                     }
                     Ok(other) => println!("<<< {:?}", other),
@@ -147,6 +161,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 req: "query_1".to_string(),
                 q,
                 limit,
+            };
+            let resp = client.call(&req).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
+        }
+        Commands::ChipAct {
+            chip_id,
+            action,
+            confirm,
+        } => {
+            let req = WireRequest::ChipAct {
+                req: "act_1".to_string(),
+                chip_id,
+                action_label: action,
+                confirm,
             };
             let resp = client.call(&req).await?;
             println!("{}", serde_json::to_string_pretty(&resp)?);
