@@ -14,9 +14,10 @@ check-leaks:
 	@echo "✅ Sabit yol sızıntısı yok."
 
 # 2. Rust sözdizimi ve biçimlendirme denetimi
+# NOT: Sondaki "|| true" kaldırıldı — biçimlendirme bozuksa verify GERÇEKTEN başarısız olur.
 fmt-check:
 	@echo "🔍 Rust biçimlendirme denetimi..."
-	@cargo fmt --all -- --check 2>/dev/null || true
+	@if [ -d src ]; then cargo fmt --all -- --check; else echo "(src/ yok, atlandı)"; fi
 
 # Formatı otomatik uygula
 fmt:

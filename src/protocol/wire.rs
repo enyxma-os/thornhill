@@ -31,11 +31,15 @@ pub enum WireRequest {
         #[serde(default)]
         filter: SubFilter,
     },
-    /// Doğrudan graf sorgusu (salt-okunur SQL)
+    /// RFC-001 §7.1: Yapılandırılmış graf sorgusu (salt-okunur).
+    /// Not: Tel üzerinden serbest SQL kabul EDİLMEZ (§8 güvenlik modeli).
     Query {
         #[serde(default)]
         req: String,
-        sql: String,
+        /// Sorgu türü: "recent" | "causal"
+        q: String,
+        #[serde(default = "default_limit")]
+        limit: u32,
     },
     /// Action Chip onay/ret eylemi
     #[serde(rename = "chip.act")]
@@ -49,6 +53,10 @@ pub enum WireRequest {
 
 fn default_version() -> u8 {
     1
+}
+
+fn default_limit() -> u32 {
+    100
 }
 
 /// Abonelik filtre kriterleri
@@ -97,10 +105,7 @@ pub enum WireResponse {
         error: String,
     },
     /// Canlı olay akışı bildirimi
-    EventNotification {
-        op: String,
-        event: CanonicalEvent,
-    },
+    EventNotification { op: String, event: CanonicalEvent },
 }
 
 impl WireResponse {
