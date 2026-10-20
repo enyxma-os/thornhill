@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use thornhill::bus::BusServer;
 use thornhill::graph::GraphStore;
+use thornhill::sensory::hyprland::HyprlandSensory;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
 use tracing::{info, warn};
@@ -20,6 +21,10 @@ struct Args {
     /// Özel graf veritabanı yolu (varsayılan: $XDG_STATE_HOME/thornhill/graph.db)
     #[arg(short, long)]
     db: Option<PathBuf>,
+
+    /// Duyu modüllerini devre dışı bırak (yalnız bus + graf; test için)
+    #[arg(long)]
+    no_sensory: bool,
 
     /// Ayrıntılı loglama (debug)
     #[arg(short, long)]
@@ -39,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     info!("============================================================");
-    info!("👁️  Enyxma Thornhill Daemon v0.1.0 (Faz 1, Adım 3: graf dahil)");
+    info!("👁️  Enyxma Thornhill Daemon v0.1.0 (Faz 1, Adım 4: Hyprland duyu)");
     info!("   PID: {}", std::process::id());
     info!("   Manifesto: Bir uzuv sorulunca çalışır. Thornhill hiç sorulmadığı halde bakar.");
     info!("============================================================");
@@ -55,6 +60,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let server = Arc::new(BusServer::new(args.socket, graph));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    // Duyu modülleri (Faz 1 Adım 4): Hyprland socket2 -> ingest()
+    if !args.no_sensory {
+        let (sink_tx, mut sink_rx) = tokio::sync::mpsc::unbounded_channel();
+        let server_for_sensory = Arc::clone(&server);
+
+        // Duyu üreticisi: socket2 satırlarını kanonik olaylara çevirir.
+        tokio::spawn(async move {
+            HyprlandSensory::run(sink_tx).await;
+        });
+
+        // Duyu tüketicisi: olayları bus'a (grafe + yayın) aktarır.
+        tokio::spawn(async move {
+            while let Some(event) = sink_rx.recv().await {
+                server_for_sensory.ingest(event);
+            }
+        });
+
+        info!("Duyu modülü etkin: Hyprland socket2 dinleyicisi başlatıldı");
+    } else {
+        info!("Duyu modülleri devre dışı (--no-sensory)");
+    }
 
     // SIGINT ve SIGTERM yakalama
     tokio::spawn(async move {
