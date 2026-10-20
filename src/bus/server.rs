@@ -59,6 +59,18 @@ impl BusServer {
         Ok(())
     }
 
+    /// YENİ (Faz 1 Adım 4): Duyu modülleri için içsel besleme yolu.
+    /// Kalıcılaştırır ve canlı abonelere yayınlar — UDS `Event` op'u ile
+    /// birebir aynı "tek gerçek kaynak" akışını kullanır (RFC-001 §5).
+    pub fn ingest(&self, event: CanonicalEvent) -> bool {
+        if let Err(e) = self.graph.append(&event) {
+            error!("Duyu olayı grafe yazılamadı: {}", e);
+            return false;
+        }
+        let _ = self.event_tx.send(event);
+        true
+    }
+
     /// Daemon ana dinleme döngüsünü başlatır.
     pub async fn run(
         self: Arc<Self>,
