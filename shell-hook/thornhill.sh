@@ -1,65 +1,58 @@
 # thornhill.sh — RFC-001 §4.1: Kabuk hata kancası (sıfır maliyetli köprü)
 #
-# Kurallar:
-#   - Yalnızca exit_code != 0 iken yazar (gürültü kontrolü, RFC-001 §4.1).
-#   - fd 9 kapalıysa / daemon yoksa sessizce pas geçer (kabuk asla bloklanmaz).
-#   - Sabit kullanıcı yolu YOK: soket $XDG_RUNTIME_DIR'den çözülür (ADR-062).
+# v2 — ENXIO düzeltmesi (Seçenek 1 izleme turu):
+#   Önceki sürüm `exec 9>>"$sock"` ile sokete doğrudan yönlendirme yapıyordu.
+#   Bu YALNIZ zsh'ta çalışır (zsh, yönlendirmede socket() + connect() yapabilen
+#   tek büyük kabuktur); bash/fish'te Linux VFS, SOCK_STREAM soketine open()
+#   izin vermez ve ENXIO döner. Yeni desende her üç kabuk aynı yolu kullanır:
+#   hata anında `thornhill-ctl inject` arka planda çalışır ( Soket yoksa 0 ms ).
 #
-# Kurulum (zsh — .zshrc'ye):
-#   source <thornhill-paket-yolu>/share/thornhill/shell-hook/thornhill.sh
-#
-# Not (zsh): precmd komut metnini argüman olarak ALMAZ; komutu preexec yakalar,
-# precmd ise son komutun $status'ünü raporlar (yalnız ilk okuma geçerlidir).
+# Kurallar (RFC-001 §4.1 / Aksiyom 2):
+#   - Yalnızca exit_code != 0 iken yazar (gürültü kontrolü).
+#   - thornhill-ctl yolda yoksa / soket yoksa sessizce pas geçer.
+#   - Sabit kullanıcı yolu YOK: $XDG_RUNTIME_DIR'den çözülür (ADR-062).
 
-__thornhill_connect() {
+__thornhill_escape() {
+  # JSON'a güvenli gömme: ters bölü + tırnak + satır sonu temizliği, 200 bayt kesme
+  printf '%s' "$1" | head -c 200 \
+    | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n\r' '  '
+}
+
+__thornhill_report() {
+  local code="$1" cmd="$2"
+  [[ "$code" -ne 0 ]] || return 0
+  [[ -n "$cmd" ]] || return 0
+  command -v thornhill-ctl >/dev/null 2>&1 || return 0
   local sock="${THORNHILL_SOCK:-${XDG_RUNTIME_DIR:-}/thornhill/thornhill.sock}"
   [[ -S "$sock" ]] || return 0
-  exec 9>>"$sock" 2>/dev/null || true
+  thornhill-ctl --socket "$sock" inject \
+    --src shell --kind cmd.done --subject "$$" \
+    --ctx "$(printf '{"exit_code": %d, "cmd": "%s"}' "$code" "$(__thornhill_escape "$cmd")")" \
+    >/dev/null 2>&1 &
+  disown 2>/dev/null || true
 }
-__thornhill_connect
 
+# --- zsh ---
 if [[ -n "$ZSH_VERSION" ]]; then
   autoload -Uz add-zsh-hook
-
-  # preexec: çalıştırılan komut metnini yakalar (precmd $1 alamaz)
-  __thornhill_preexec() {
-    __THORNHILL_LAST_CMD="$1"
-  }
-
-  __thornhill_precmd() {
+  __thornhill_preexec()  { __THORNHILL_LAST_CMD="$1"; }
+  __thornhill_precmd()   {
     local code=$?
-    [[ $code -eq 0 ]] && return 0                      # gürültü kontrolü
-    local cmd="$__THORNHILL_LAST_CMD"
+    __thornhill_report "$code" "$__THORNHILL_LAST_CMD"
     __THORNHILL_LAST_CMD=""
-    [[ -n "$cmd" ]] || return 0
-    # JSON'a güvenli gömme: ters bölü, tırnak, satır sonu temizliği + 200 bayt kesme
-    local cmd_json
-    cmd_json=$(print -r -- "$cmd" | head -c 200 \
-      | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
-    printf '{"op":"event","req":"t-%s","src":"shell","kind":"cmd.done","subject":"%d","ctx":{"exit_code":%d,"cmd":"%s"}}\n' \
-      "$EPOCHSECONDS" "$$" "$code" "$cmd_json" >&9 2>/dev/null || true
   }
-
   add-zsh-hook preexec __thornhill_preexec
-  add-zsh-hook precmd __thornhill_precmd
+  add-zsh-hook precmd  __thornhill_precmd
 
+# --- bash ---
 elif [[ -n "$BASH_VERSION" ]]; then
-  __thornhill_preexec_bash() {
-    __THORNHILL_LAST_CMD="$1"
-  }
-  __thornhill_report_bash() {
+  __thornhill_preexec_bash() { __THORNHILL_LAST_CMD="$BASH_COMMAND"; }
+  __thornhill_report_bash()  {
     local code=$?
-    [[ $code -eq 0 ]] && return 0
-    local cmd="$__THORNHILL_LAST_CMD"
+    __thornhill_report "$code" "$__THORNHILL_LAST_CMD"
     __THORNHILL_LAST_CMD=""
-    local cmd_json
-    cmd_json=$(printf '%s' "$cmd" | head -c 200 \
-      | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')
-    printf '{"op":"event","req":"t-%s","src":"shell","kind":"cmd.done","subject":"%d","ctx":{"exit_code":%d,"cmd":"%s"}}\n' \
-      "$EPOCHSECONDS" "$$" "$code" "$cmd_json" >&9 2>/dev/null || true
   }
-  # bash 5+ preexec kancası (DEBUG sinyali yoluya); eski bash'te cmd boş kalır — sorun değil
-  trap '__thornhill_preexec_bash "$BASH_COMMAND"' DEBUG
+  trap '__thornhill_preexec_bash' DEBUG
   [[ -n "$PROMPT_COMMAND" ]] \
     && PROMPT_COMMAND="__thornhill_report_bash;${PROMPT_COMMAND}" \
     || PROMPT_COMMAND="__thornhill_report_bash"
