@@ -77,7 +77,7 @@ impl ReflexEngine {
                             label: "Komutu Yeniden Çalıştır".to_string(),
                             action_type: "exec".to_string(),
                             risk: "medium".to_string(),
-                            payload: serde_json::json!({ "cmd": cmd, "confirm": "hold" }),
+                            payload: serde_json::json!({ "cmd": cmd }),
                         },
                     ],
                     ttl_ms: 60_000,

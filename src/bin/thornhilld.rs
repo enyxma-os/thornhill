@@ -67,12 +67,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     let brain = Arc::new(Brain::new(Arc::clone(&graph), s2_config));
 
+    // RFC-001 §6.2: Otomatik retention (30 gün öncesini günde bir temizle)
+    let retention_graph = Arc::clone(&graph);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+        loop {
+            interval.tick().await;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let thirty_days_ms = 30 * 24 * 3600 * 1000;
+            let _ = retention_graph.forget_before(now_ms - thirty_days_ms);
+        }
+    });
+
     let server = Arc::new(BusServer::new(args.socket, graph, brain));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Duyu modülleri (Faz 1 Adım 4): Hyprland socket2 -> ingest()
     if !args.no_sensory {
-        let (sink_tx, mut sink_rx) = tokio::sync::mpsc::unbounded_channel();
+        // RFC-001 §4.2: Sınırlı duyu kanalı (1024 olay, coalesce)
+        let (sink_tx, mut sink_rx) = tokio::sync::mpsc::channel(1024);
         let server_for_sensory = Arc::clone(&server);
 
         tokio::spawn(async move {

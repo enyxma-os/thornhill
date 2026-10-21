@@ -26,7 +26,7 @@ function __thornhill_report --description "Thornhill hata raporu (arka plan, ses
     test -S "$sock"; or return 0
     set -l cmd_json (__thornhill_escape "$cmd")
     command thornhill-ctl --socket "$sock" inject \
-        --src shell --kind cmd.done --subject %self \
+        --src shell --kind cmd.done --subject $fish_pid \
         --ctx (printf '{"exit_code": %d, "cmd": "%s"}' "$code" "$cmd_json") \
         >/dev/null 2>&1 &
     disown

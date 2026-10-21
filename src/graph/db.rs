@@ -14,6 +14,8 @@ use tracing::info;
 const DDL: &str = r#"
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
 
 CREATE TABLE IF NOT EXISTS events (
   id        TEXT PRIMARY KEY,
@@ -44,7 +46,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_edges ON edges(src_ev, dst_ev, rel);
 
 CREATE TABLE IF NOT EXISTS lessons (
   id        INTEGER PRIMARY KEY,
-  pattern   TEXT NOT NULL,
+  pattern   TEXT NOT NULL UNIQUE,
   summary   TEXT NOT NULL,
   remedy    TEXT,
   score     REAL NOT NULL DEFAULT 0.5,
@@ -77,7 +79,10 @@ pub fn resolve_db_path() -> PathBuf {
     let base = std::env::var("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".local").join("state")))
-        .unwrap_or_else(|_| PathBuf::from("/tmp"));
+        .unwrap_or_else(|_| {
+            tracing::warn!("XDG_STATE_HOME ve HOME bulunamadı, geçici /tmp dizinine yazılıyor!");
+            PathBuf::from("/tmp")
+        });
     base.join("thornhill").join("graph.db")
 }
 
@@ -179,23 +184,15 @@ impl GraphStore {
         remedy: Option<&str>,
     ) -> GraphResult<bool> {
         let conn = self.conn.lock().expect("graph mutex zehirlendi");
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM lessons WHERE pattern = ?1)",
-            params![pattern],
-            |r| r.get(0),
-        )?;
-        if exists {
-            return Ok(false);
-        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        conn.execute(
-            "INSERT INTO lessons (pattern, summary, remedy, created) VALUES (?1, ?2, ?3, ?4)",
+        let inserted = conn.execute(
+            "INSERT OR IGNORE INTO lessons (pattern, summary, remedy, created) VALUES (?1, ?2, ?3, ?4)",
             params![pattern, summary, remedy, now],
         )?;
-        Ok(true)
+        Ok(inserted > 0)
     }
 
     /// §8.6 — Unutma hakkı: verilen zamandan eski events'i siler.
