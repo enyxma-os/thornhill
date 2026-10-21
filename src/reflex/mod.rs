@@ -4,6 +4,9 @@
 //! - LLM çağrısı YOKTUR; VRAM kullanımı 0.
 //! - Yanıt bütçesi: p99 < 1 ms (G3). `evaluate()` bunu kendi içinde ölçer.
 //! - Kurallar deterministik: (src, kind) + ctx predicate -> Action Chip (§7.2).
+//!
+//! Faz 5 ekleri:
+//! - `is_escalation_candidate`: §9.3.1 (yeni desen) yükseltme adayı testi.
 
 use crate::protocol::wire::ActionChip;
 use std::time::{Duration, Instant};
@@ -16,7 +19,7 @@ impl ReflexEngine {
         Self
     }
 
-    /// S1 değerlendirme girişi. Bütçeyi ölçer, aşarsa uyarır (G3 regisyon izi).
+    /// S1 değerlendirme girişi. Bütçeyi ölçer, aşarsa uyarır (G3 kural-içi ölçüm).
     pub fn evaluate(&self, event: &crate::protocol::CanonicalEvent) -> Option<ActionChip> {
         let start = Instant::now();
         let chip = self.evaluate_inner(event);
@@ -84,8 +87,6 @@ impl ReflexEngine {
                     conf: 1.0,
                 })
             }
-            // KURAL 2 (vadesi Faz 3): habit/lesson eşleşmesiyle genişlenecek
-            // (RFC-001 §6.3 destek mekanizması bağlandığında).
             _ => None,
         }
     }
@@ -95,6 +96,22 @@ impl Default for ReflexEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// §9.3.1 (Faz 5): S1'in kaçırdığı **sistemik** olaylar S2 yükseltme adayıdır.
+/// Saf fonksiyon — kararı bus kaydeder (`s1_escalate` olayı, §9.3 karar günlüğü).
+pub fn is_escalation_candidate(ev: &crate::protocol::CanonicalEvent, s1_fired: bool) -> bool {
+    if s1_fired {
+        return false; // §9.3: S1 çözdüyse yükseltme yok
+    }
+    let systemic_failure = matches!((ev.src.as_str(), ev.kind.as_str()), ("shell", "cmd.done"))
+        && ev
+            .ctx
+            .get("exit_code")
+            .and_then(|v| v.as_i64())
+            .map(|c| c != 0)
+            .unwrap_or(false);
+    systemic_failure
 }
 
 #[cfg(test)]
@@ -159,9 +176,21 @@ mod tests {
 
     #[test]
     fn missing_ctx_is_safe() {
-        // ctx'te exit_code yoksa kural patlamamalı (None dönmeli).
         let engine = ReflexEngine::new();
         let ev = CanonicalEvent::new("shell", "cmd.done", "1", json!({}));
         assert!(engine.evaluate(&ev).is_none());
+    }
+
+    #[test]
+    fn escalation_candidate_only_when_s1_misses() {
+        // S1 çözdüyse asla yükselmez
+        assert!(!is_escalation_candidate(&shell_event(1, "x", ""), true));
+        // S1 kaçırdı + sistemik hata → aday
+        assert!(is_escalation_candidate(&shell_event(1, "x", ""), false));
+        // Başarılı komut asla aday değil
+        assert!(!is_escalation_candidate(&shell_event(0, "x", ""), false));
+        // Sistemik olmayan kaynaklar aday değil
+        let ev = CanonicalEvent::new("hyprland", "win.focus", "kitty", json!({}));
+        assert!(!is_escalation_candidate(&ev, false));
     }
 }

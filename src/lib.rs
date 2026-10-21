@@ -11,5 +11,5 @@ pub use brain::Brain;
 pub use bus::{BusClient, BusServer};
 pub use graph::GraphStore;
 pub use protocol::{CanonicalEvent, SubFilter, WireRequest, WireResponse};
-pub use reflex::ReflexEngine;
+pub use reflex::{is_escalation_candidate, ReflexEngine};
 pub use sensory::hyprland::{discover_socket_path, HyprlandSensory};

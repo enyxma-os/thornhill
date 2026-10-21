@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     info!("============================================================");
-    info!("👁️  Enyxma Thornhill Daemon v0.1.0 (Faz 3: S2 bilişsel katman)");
+    info!("👁️  Enyxma Thornhill Daemon v0.1.0 (Faz 5: telemetri + §9.3 günlüğü)");
     info!("   PID: {}", std::process::id());
     info!("   Manifesto: Bir uzuv sorulunca çalışır. Thornhill hiç sorulmadığı halde bakar.");
     info!("============================================================");
@@ -62,12 +62,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Faz 3: S2 bilişsel katman (Ollama uyumlu yerel endpoint, §9.2)
     let s2_config = S2Config::from_env();
     info!(
-        "🧠 S2 yapılandırması: endpoint={}, model={}",
-        s2_config.endpoint, s2_config.model
+        "🧠 S2 yapılandırması: endpoint={}, model={}, pil modunda izin={}",
+        s2_config.endpoint, s2_config.model, s2_config.allow_on_battery
     );
     let brain = Arc::new(Brain::new(Arc::clone(&graph), s2_config));
 
-    // RFC-001 §6.2: Otomatik retention (30 gün öncesini günde bir temizle)
+    // Faz 5 — RFC-001 §6.2: Otomatik retention (30 gün; günde bir temizlik).
+    // Not: interval'in ilk tick'i anında gelir; ilk temizlik açılışta yapılır.
     let retention_graph = Arc::clone(&graph);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
@@ -77,8 +78,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
-            let thirty_days_ms = 30 * 24 * 3600 * 1000;
-            let _ = retention_graph.forget_before(now_ms - thirty_days_ms);
+            let thirty_days_ms = 30i64 * 24 * 3600 * 1000;
+            if let Ok((ne, nd)) = retention_graph.forget_before(now_ms - thirty_days_ms) {
+                if ne > 0 {
+                    info!("🧹 Retention: {} olay, {} kenar silindi (30 gün)", ne, nd);
+                }
+            }
         }
     });
 
@@ -87,7 +92,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Duyu modülleri (Faz 1 Adım 4): Hyprland socket2 -> ingest()
     if !args.no_sensory {
-        // RFC-001 §4.2: Sınırlı duyu kanalı (1024 olay, coalesce)
         let (sink_tx, mut sink_rx) = tokio::sync::mpsc::channel(1024);
         let server_for_sensory = Arc::clone(&server);
 

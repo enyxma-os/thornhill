@@ -35,6 +35,11 @@ pub enum WireRequest {
         #[serde(default = "default_limit")]
         limit: u32,
     },
+    /// Faz 5: Graf telemetrisi (events/edges/lessons/habits sayaçları).
+    Stats {
+        #[serde(default)]
+        req: String,
+    },
     /// RFC-001 §7.2: Action Chip onay/ret.
     #[serde(rename = "chip.act")]
     ChipAct {

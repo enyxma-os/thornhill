@@ -58,15 +58,15 @@ enum Commands {
         #[arg(long, default_value_t = 50)]
         limit: u32,
     },
+    /// Graf telemetrisi: tablo sayaçları (Faz 5)
+    Stats,
     /// Action Chip eylemini onayla veya önizle (§8.5 risk merdiveni)
     ChipAct {
         /// Çip kimliği (örn: chip_01M5...)
         chip_id: String,
-
         /// Eylem etiketi (boşsa ilk eylem seçilir)
         #[arg(short, long)]
         action: Option<String>,
-
         /// Eylemi kesin olarak onayla (hold-to-confirm)
         #[arg(long, default_value_t = false)]
         confirm: bool,
@@ -200,6 +200,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 limit,
             };
             let resp = client.call(&req).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
+        }
+        Commands::Stats => {
+            let req = WireRequest::Stats {
+                req: "stats_1".to_string(),
+            };
+            let resp = client.call(&req).await?;
+            println!("📊 Graf telemetrisi:");
             println!("{}", serde_json::to_string_pretty(&resp)?);
         }
         Commands::ChipAct {

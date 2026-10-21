@@ -1,15 +1,10 @@
 //! RFC-001 §9.2 — Sistem 2 (Bilişsel Katman): S2 orkestratörü.
 //!
-//! Görev sırası (`answer()`):
-//!   1. Grafın ilgili alt zincirini **bağlam paketi** olarak hazırla (§9.2)
-//!   2. LLM'e (yerel Ollama uyumlu) tek turlu, şemaya zorlanmış istek gönder
-//!   3. Yanıtı ayrıştır; `{explanation, remedy}` döner (chip altına akar)
-//!
 //! Katı kurallar:
-//! - Rate limit (§10): tetik sınıfı başına 1 çağrı / 2 sn (user) / 10 sn (chip).
+//! - Rate limit (§10): tetik sınıfı başına 1 çağrı; damga yalnız `Ok` sonrası yazılır.
 //! - Endpoint ADR-062: `THORNHILL_S2_ENDPOINT` env (varsayılan yerel Ollama).
-//! - LLM çıktısına güven sınırı: yanıt `conf` taşıyamaz; kullanıcı onayı olmadan
-//!   lesson/habit kazanamaz (§6.3 lekelenme karşı önlem).
+//! - Faz 5 — §12 açık sorusu: pil modunda S2 varsayılan KAPALI
+//!   (`THORNHILL_S2_ON_BATTERY=1` ile bilinçli açılabilir).
 
 use crate::graph::GraphStore;
 use std::sync::Arc;
@@ -21,6 +16,8 @@ use tracing::{debug, info};
 pub struct S2Config {
     pub endpoint: String,
     pub model: String,
+    /// Faz 5: pil modunda S2'ye izin (varsayılan: kapalı — RFC-001 §12)
+    pub allow_on_battery: bool,
 }
 
 impl S2Config {
@@ -29,6 +26,9 @@ impl S2Config {
             endpoint: std::env::var("THORNHILL_S2_ENDPOINT")
                 .unwrap_or_else(|_| "http://127.0.0.1:11434/api/generate".to_string()),
             model: std::env::var("THORNHILL_S2_MODEL").unwrap_or_else(|_| "llama3.2".to_string()),
+            allow_on_battery: std::env::var("THORNHILL_S2_ON_BATTERY")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
     }
 }
@@ -37,9 +37,27 @@ impl S2Config {
 fn rate_limit_for(trigger_class: &str) -> Duration {
     match trigger_class {
         "user" => Duration::from_secs(2),
-        "chip" => Duration::from_secs(10),
         _ => Duration::from_secs(10),
     }
+}
+
+/// Faz 5: Sistemin pil ile çalışıp çalışmadığını saptar.
+/// `/sys/class/power_supply/*/status` altında "Discharging" bulursa pil dedir.
+/// Sabor/yok durumunda (masaüstü) kablolu varsayılır — S2 serbest.
+pub fn is_on_battery() -> bool {
+    let dir = match std::fs::read_dir("/sys/class/power_supply") {
+        Ok(d) => d,
+        Err(_) => return false, // ölçüm yok: kablolu kabul et
+    };
+    for entry in dir.flatten() {
+        let status_path = entry.path().join("status");
+        if let Ok(status) = std::fs::read_to_string(&status_path) {
+            if status.trim().eq_ignore_ascii_case("discharging") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// S2 yanıtı — şemaya zorlanmış tek turlu çıktı (§9.2).
@@ -56,7 +74,7 @@ pub struct Brain {
     graph: Arc<GraphStore>,
     config: S2Config,
     http: reqwest::Client,
-    /// Tetik sınıfı -> son çağrı anı (rate limit)
+    /// Tetik sınıfı -> son BAŞARILI çağrı anı (rate limit)
     last_call: Mutex<std::collections::HashMap<String, std::time::Instant>>,
 }
 
@@ -84,6 +102,13 @@ impl Brain {
     }
 
     async fn answer(&self, question: &str, trigger_class: &str) -> Result<S2Answer, String> {
+        // Faz 5 — §12: pil modunda S2 kilidi (varsayılan kapalı).
+        if !self.config.allow_on_battery && is_on_battery() {
+            return Err(
+                "S2 pil modunda kapalı (THORNHILL_S2_ON_BATTERY=1 ile açılabilir)".to_string(),
+            );
+        }
+
         // §10 rate limit: aynı tetik sınıfı için pencere içinde ikinci çağrı reddedilir.
         let window = rate_limit_for(trigger_class);
         let now = std::time::Instant::now();
@@ -97,7 +122,7 @@ impl Brain {
                     ));
                 }
             }
-        }
+        } // kilit burada bırakılır — ağ çağrısı kilit altında DEĞİL
 
         let context_pack = self.build_context_pack(question);
         info!("🧠 S2 devrede ({}): {:?}", trigger_class, question);
@@ -140,7 +165,6 @@ impl Brain {
             .json()
             .await
             .map_err(|e| format!("S2 yanıtı JSON değil: {}", e))?;
-        // Ollama /api/generate: {"response": "<json string>", ...}
         let inner_raw = v
             .get("response")
             .and_then(|r| r.as_str())
@@ -151,7 +175,7 @@ impl Brain {
         if answer.confidence > 0.0 && answer.confidence < 0.5 {
             debug!("S2 düşük güvenle yanıt verdi: {:.2}", answer.confidence);
         }
-        // Başarılı çağrı sonrası rate limit damgasını kaydet
+        // Denetim düzeltmesi (#4): damga yalnız BAŞARILI çağrı sonrası yazılır.
         {
             let mut last = self.last_call.lock().await;
             last.insert(trigger_class.to_string(), std::time::Instant::now());
@@ -213,21 +237,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rate_limit_user_is_2s_chip_is_10s() {
+    fn rate_limit_user_is_2s() {
         assert_eq!(rate_limit_for("user"), Duration::from_secs(2));
         assert_eq!(rate_limit_for("chip"), Duration::from_secs(10));
     }
 
     #[test]
-    fn config_defaults_are_local() {
+    fn config_defaults_are_local_and_battery_safe() {
+        let cfg = S2Config::from_env();
         // Varsayılan endpoint yerel Ollama olmalı (§8.1: varsayılan veri çıkışı yok)
-        let cfg = S2Config {
-            endpoint: "http://127.0.0.1:11434/api/generate".into(),
-            model: "llama3.2".into(),
-        };
         assert!(cfg.endpoint.starts_with("http://127.0.0.1"));
+        // Varsayılan: pil modunda S2 kapalı (§12)
+        assert!(!cfg.allow_on_battery);
     }
-
-    // Not: answer() ağ çağrısı yapar; birim testi yalnız saf parçaları kapsar.
-    // Uçtan uca S2 testi canlı Ollama ile elle yapılır (docs/DEPLOY.md).
 }
