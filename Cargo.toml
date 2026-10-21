@@ -21,6 +21,8 @@ libc = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 # RFC-001 §9.2: S2 LLM çağrıları (Ollama uyumlu /api/generate)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# NOT (Faz 6): HTTP/SSE katmanı için YENİ BAĞIMLILIK EKLENMEDİ —
+# hafif, elle yazılmış HTTP/1.1 sunucusu doğrudan tokio üstünde çalışır.
 
 [[bin]]
 name = "thornhilld"

@@ -178,6 +178,23 @@ impl BusServer {
         true
     }
 
+    // ---- Faz 6: HTTP katmanıyla paylaşım (UDS protokolü değişmeden) ----
+    pub fn graph(&self) -> Arc<GraphStore> {
+        Arc::clone(&self.graph)
+    }
+    pub fn brain(&self) -> Arc<Brain> {
+        Arc::clone(&self.brain)
+    }
+    pub fn registry(&self) -> Arc<ChipRegistry> {
+        Arc::clone(&self.registry)
+    }
+    pub fn event_tx(&self) -> broadcast::Sender<CanonicalEvent> {
+        self.event_tx.clone()
+    }
+    pub fn chip_tx(&self) -> broadcast::Sender<ActionChip> {
+        self.chip_tx.clone()
+    }
+
     /// Soket dizinini 0700 izinleriyle oluşturur ve bayat soketi temizler.
     fn prepare_socket(path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {

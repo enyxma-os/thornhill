@@ -28,7 +28,7 @@
           ];
           shellHook = ''
             echo "👁️ Thornhill Bilişsel Çekirdek Geliştirme Ortamı Hazır!"
-            echo "Anayasa: docs/rfc-001.md | Doğrulama: just verify"
+            echo "Anayasa: docs/rfc-001.md | Doğrulama: just verify | Web: http://127.0.0.1:9099"
           '';
         };
 
@@ -44,23 +44,25 @@
           nativeBuildInputs = with pkgs; [ pkg-config ];
           buildInputs = with pkgs; [ sqlite ];
 
+          # NOT (Faz 6): derleme "build.rs - dashboard" işlemi yapmaz; statik dosyalar
+          # include_bytes! ile binary'e gömülüdür (dashboard/ kaynak ağacında durur).
+          # Yine de XDG override dizinine kopyalanabilir kaynak olarak paketlenir:
           postInstall = ''
-            mkdir -p $out/share/thornhill/docs $out/share/thornhill/shell-hook $out/share/thornhill/shell
+            mkdir -p $out/share/thornhill/docs $out/share/thornhill/shell-hook $out/share/thornhill/shell $out/share/thornhill/dashboard
             cp docs/rfc-001.md docs/DEPLOY.md $out/share/thornhill/docs/
-            cp shell-hook/thornhill.sh $out/share/thornhill/shell-hook/
-            cp shell-hook/thornhill.fish $out/share/thornhill/shell-hook/
+            cp shell-hook/thornhill.sh shell-hook/thornhill.fish $out/share/thornhill/shell-hook/
             cp -r shell/* $out/share/thornhill/shell/
+            cp -r dashboard/* $out/share/thornhill/dashboard/
           '';
 
           meta = with pkgs.lib; {
-            description = "Ambient cognitive backbone: sensory tap, causal graph, dual-mind reflex engine";
+            description = "Ambient cognitive backbone: sensory tap, causal graph, dual-mind reflex engine, ambient web console";
             license = licenses.mit;
             platforms = platforms.linux;
             mainProgram = "thornhilld";
           };
         };
       }) // {
-        # Evrensel NixOS Modülü (system düzeyi kullanıcı servisi)
         nixosModules.default = { config, lib, pkgs, ... }:
           let
             cfg = config.services.thornhill;
@@ -71,7 +73,6 @@
               package = lib.mkOption {
                 type = lib.types.package;
                 default = self.packages.${pkgs.system}.default;
-                description = "Thornhill paketi (varsayılan: bu flake'in çıktısı)";
               };
             };
 
@@ -84,7 +85,6 @@
                   ExecStart = "${cfg.package}/bin/thornhilld";
                   Restart = "on-failure";
                   RestartSec = "2s";
-                  # Sertleştirme (RFC-001 §8 uyumlu)
                   PrivateTmp = true;
                   NoNewPrivileges = true;
                   ProtectSystem = "strict";
@@ -99,16 +99,13 @@
             };
           };
 
-        # Evrensel Home Manager Modülü (kullanıcı düzeyi + Fish/Zsh/Bash kancaları)
         homeManagerModules.default = { config, lib, pkgs, ... }:
           let
             cfg = config.services.thornhill;
             shellHookSh = ''
-              # Thornhill duyusal kancası (yalnız hata anında yazar; ENXIO-düzeltmeli v2)
               source ${cfg.package}/share/thornhill/shell-hook/thornhill.sh
             '';
             shellHookFish = ''
-              # Thornhill duyusal kancası (yalnız hata anında yazar; ENXIO-düzeltmeli v2)
               source ${cfg.package}/share/thornhill/shell-hook/thornhill.fish
             '';
           in
@@ -118,15 +115,10 @@
               package = lib.mkOption {
                 type = lib.types.package;
                 default = self.packages.${pkgs.system}.default;
-                description = "Thornhill paketi";
               };
               enableShellHook = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
-                description = ''
-                  Kabuk hata kancasını etkileşimli kabuklara bağla.
-                  Fish, Zsh ve Bash desteklenir (kabuk başına uygun köprü source edilir).
-                '';
               };
             };
 
@@ -149,9 +141,6 @@
                   };
                 };
               })
-              # Shell hook entegrasyonu — her kabuk kendi dosyasını source eder.
-              # mkIf koşulları kullanıcıda o kabuğun açık olup olmadığına göre otomatik
-              # devreye girer (programs.<shell>.enable yoksa seçenek tipi default verir).
               (lib.mkIf (cfg.enable && cfg.enableShellHook) {
                 programs.fish.interactiveShellInit = lib.mkOrder 1200 shellHookFish;
                 programs.zsh.initExtra = lib.mkOrder 1200 shellHookSh;

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>👁️ Thornhill — Ambient Web Console</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="hud">
+  <div class="brand">
+    <span id="eye" class="eye">💤</span>
+    <div>
+      <h1>THORNHILL</h1>
+      <p class="motto">Bir uzuv sorulunca çalışır. Thornhill hiç sorulmadığı halde bakar.</p>
+    </div>
+  </div>
+  <div class="hud-metrics">
+    <div class="metric"><span class="label">olay</span><span class="value" id="m-events">—</span></div>
+    <div class="metric"><span class="label">kenar</span><span class="value" id="m-edges">—</span></div>
+    <div class="metric"><span class="label">ders</span><span class="value" id="m-lessons">—</span></div>
+    <div class="metric"><span class="label">alışkanlık</span><span class="value" id="m-habits">—</span></div>
+    <div class="metric"><span class="label">p50 gecikme</span><span class="value" id="m-p50">—</span></div>
+    <div class="metric"><span class="label">p99 gecikme</span><span class="value" id="m-p99">—</span></div>
+  </div>
+</header>
+
+<main>
+  <section id="left-col">
+    <div class="card" id="graph-card">
+      <h2>Nedensellik Grafiği <span class="tag">D3 force</span></h2>
+      <svg id="graph" viewBox="0 0 760 460" role="img" aria-label="nedensellik grafiği"></svg>
+      <p class="hint">Düğüm = olay türü · kenar kalınlığı = support · renk: <span class="c-sense">duyu</span> <span class="c-reflex">refleks</span> <span class="c-cogn">biliş</span></p>
+    </div>
+
+    <div class="card" id="g3-card">
+      <h2>Olay Akış Aralığı <span class="tag">son 100 olay · ms</span></h2>
+      <svg id="latency" viewBox="0 0 760 120" role="img" aria-label="gecikme grafiği"></svg>
+      <p class="hint">olaylar arası varış aralığı (ms) — <span class="ok">1 ms</span> referans çizgisi; G3 boru hattı ölçümünün otoritesi daemon log'udur (RFC-001 §10, Faz 5)</p>
+    </div>
+  </section>
+
+  <section id="right-col">
+    <div class="card" id="chips-card">
+      <h2>Action Chip'ler <span class="tag">§7.2</span></h2>
+      <div id="chips"><p class="hint">henüz çip yok</p></div>
+    </div>
+
+    <div class="card" id="s2-card">
+      <h2>S2 Bilişsel Konsol <span class="tag">ask</span></h2>
+      <div id="s2-log"></div>
+      <form id="ask-form">
+        <input id="ask-input" type="text" autocomplete="off" placeholder="Thornhill'e sor… (yerel Ollama)">
+        <button type="submit">Sor</button>
+      </form>
+    </div>
+
+    <div class="card" id="forget-card">
+      <h2>Unutma Hakkı <span class="tag">§8.6</span></h2>
+      <div class="forget-row">
+        <button class="forget" data-days="1">1 gün</button>
+        <button class="forget" data-days="7">7 gün</button>
+        <button class="forget" data-days="30">30 gün</button>
+      </div>
+      <p class="hint">lessons/habits korunur; yalnız eski olaylar + kenarları silinir.</p>
+    </div>
+
+    <div class="card" id="ticker-card">
+      <h2>Olay Ticker'ı <span class="tag">canlı SSE</span></h2>
+      <div id="ticker"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>Thornhill v0.1.0 · Faz 6 Ambient Web Console · tüm veri yerelde (RFC-001 §8.1)</span>
+</footer>
+
+<script src="/d3.v7.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

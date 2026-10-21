@@ -1,0 +1,172 @@
+/* Thornhill Ambient Web Console — Enyxma / Person of Interest teması
+   Palet (kullanıcı tanımı): zemin #121417, kart #1e2229, alarm #e06c75,
+   duyu #61afef, S1 refleks #98c379, S2 biliş #e0af68. Monospace tipografi. */
+
+:root {
+  --bg: #121417;
+  --card: #1e2229;
+  --border: #3b4261;
+  --alarm: #e06c75;
+  --sense: #61afef;
+  --reflex: #98c379;
+  --cogn: #e0af68;
+  --text: #abb2bf;
+  --text-dim: #5c6370;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 13px;
+}
+
+/* ---------- HUD ---------- */
+#hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #161a20 0%, var(--bg) 100%);
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand h1 { margin: 0; font-size: 18px; letter-spacing: 6px; color: var(--sense); }
+.motto { margin: 2px 0 0; color: var(--text-dim); font-size: 11px; }
+.eye { font-size: 26px; }
+.eye.awake { color: var(--reflex); text-shadow: 0 0 12px var(--reflex); }
+
+.hud-metrics { display: flex; gap: 18px; flex-wrap: wrap; }
+.metric { text-align: center; }
+.metric .label { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; }
+.metric .value { font-size: 18px; color: var(--text); }
+.metric .value.ok { color: var(--reflex); }
+.metric .value.alarm { color: var(--alarm); }
+
+/* ---------- Yerleşim ---------- */
+main {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.2fr) minmax(360px, 1fr);
+  gap: 14px;
+  padding: 14px 20px;
+}
+@media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.tag {
+  float: right;
+  font-size: 10px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+.hint { color: var(--text-dim); font-size: 11px; margin: 8px 0 0; }
+.ok { color: var(--reflex); }
+.alarm { color: var(--alarm); }
+.c-sense { color: var(--sense); }
+.c-reflex { color: var(--reflex); }
+.c-cogn { color: var(--cogn); }
+
+/* ---------- Graf ---------- */
+#graph { width: 100%; height: auto; background: #14171c; border-radius: 6px; }
+#latency { width: 100%; height: auto; background: #14171c; border-radius: 6px; }
+.node circle { stroke-width: 1.5px; cursor: pointer; }
+.node text { fill: var(--text); font-size: 10px; font-family: inherit; }
+.link { stroke: var(--border); fill: none; }
+.link.caused { stroke: var(--alarm); stroke-opacity: 0.55; }
+
+/* ---------- Çipler ---------- */
+.chip {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--reflex);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #181c23;
+}
+.chip h3 { margin: 0 0 4px; font-size: 12px; color: var(--alarm); }
+.chip .why { color: var(--text); font-size: 11px; margin: 0 0 6px; }
+.chip .cmd { color: var(--cogn); font-size: 10px; margin: 0 0 6px; }
+.chip button {
+  background: #232833;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.chip button:hover { border-color: var(--sense); color: var(--sense); }
+.chip button:active { transform: translateY(1px); }
+
+/* ---------- S2 konsol ---------- */
+#s2-log { max-height: 180px; overflow-y: auto; margin-bottom: 8px; }
+.q { color: var(--sense); margin: 4px 0; }
+.a { color: var(--cogn); margin: 4px 0; white-space: pre-wrap; }
+.err { color: var(--alarm); margin: 4px 0; }
+#ask-form { display: flex; gap: 8px; }
+#ask-input {
+  flex: 1;
+  background: #14171c;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  padding: 6px 10px;
+}
+#ask-input:focus { outline: none; border-color: var(--cogn); }
+#ask-form button {
+  background: #232833; color: var(--cogn);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-family: inherit; cursor: pointer; padding: 6px 14px;
+}
+
+/* ---------- Unutma ---------- */
+.forget-row { display: flex; gap: 8px; }
+button.forget {
+  background: #232833; color: var(--alarm);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-family: inherit; cursor: pointer; padding: 5px 14px;
+}
+button.forget:hover { border-color: var(--alarm); }
+
+/* ---------- Ticker ---------- */
+#ticker {
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.tick { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tick .t { color: var(--text-dim); }
+.tick .src { color: var(--sense); }
+.tick .kind { color: var(--reflex); }
+.tick.err .kind { color: var(--alarm); }
+
+footer {
+  padding: 10px 20px;
+  color: var(--text-dim);
+  font-size: 10px;
+  border-top: 1px solid var(--border);
+}
