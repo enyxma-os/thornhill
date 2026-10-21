@@ -2,7 +2,7 @@ use crate::actuator::{execute_action, ChipRegistry};
 use crate::brain::Brain;
 use crate::graph::GraphStore;
 use crate::protocol::{ActionChip, CanonicalEvent, SubFilter, WireRequest, WireResponse};
-use crate::reflex::ReflexEngine;
+use crate::reflex::{is_escalation_candidate, ReflexEngine};
 use futures_util::{SinkExt, StreamExt};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -28,15 +28,20 @@ pub fn resolve_socket_path() -> PathBuf {
 /// §6.3 korelasyon penceresi (ms)
 const CORRELATION_WINDOW_MS: u64 = 10_000;
 
+/// Faz 5: S1→S2 otomatik yükseltme anahtarı (varsayılan kapalı — yalnız günlük).
+fn auto_escalate_enabled() -> bool {
+    std::env::var("THORNHILL_S2_AUTO")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 pub struct BusServer {
     socket_path: PathBuf,
     event_tx: broadcast::Sender<CanonicalEvent>,
-    /// S1 çip kanalı (§7.2): broadcast — paylaşımlı kilit yok.
     chip_tx: broadcast::Sender<ActionChip>,
     graph: Arc<GraphStore>,
     reflex: Arc<ReflexEngine>,
     registry: Arc<ChipRegistry>,
-    /// Faz 3: S2 bilişsel katman.
     brain: Arc<Brain>,
 }
 
@@ -57,17 +62,21 @@ impl BusServer {
         }
     }
 
-    /// Duyu modülleri için içsel besleme yolu (Faz 1 Adım 4).
-    /// 1) kalıcılaştır → 2) §6.3 korelasyon → 3) S1 refleks.
+    /// Duyu modülleri için içsel besleme yolu.
+    /// Faz 5: G3 ölçümü artık TAM boru hattını kapsar (denetim bulgu #6).
     pub fn ingest(&self, event: CanonicalEvent) -> bool {
-        // 1) Olayı önce kalıcılaştır (edges foreign key şartı)
+        let pipeline_start = std::time::Instant::now();
+
+        // 1) Kalıcılaştır (edges foreign key şartı)
         if let Err(e) = self.graph.append(&event) {
             error!("Duyu olayı grafe yazılamadı: {}", e);
             return false;
         }
         let _ = self.event_tx.send(event.clone());
 
-        // 2) §6.3: pencere içindeki ilgili olaylarla "caused" kenarı kur
+        let mut s1_fired = false;
+
+        // 2) §6.3 korelasyon
         if event.src == "shell" && event.kind == "cmd.done" {
             let failed = event
                 .ctx
@@ -112,17 +121,59 @@ impl BusServer {
             }
         }
 
-        // 3) S1 Refleks (§9.1): LLM'siz, <1 ms.
-        if let Some(mut chip) = self.reflex.evaluate(&event) {
+        // 3) S1 refleks (§9.1)
+        if let Some(chip) = self.reflex.evaluate(&event) {
+            s1_fired = true;
             debug!("S1 çip üretti: {} ({})", chip.id, chip.title);
-            // Nedensel gerekçe zenginleştirmesi (§6.3 kenarlarından)
-            if let Ok(rows) = self.graph.query("causal", 5) {
-                if !rows.is_empty() {
-                    chip.why = format!("{} | graf: {} kenar destekli", chip.why, rows.len());
-                }
-            }
             self.registry.insert(chip.clone());
             let _ = self.chip_tx.send(chip);
+        } else if is_escalation_candidate(&event, false) {
+            // Faz 5 — §9.3 karar günlüğü: S1'in kaçırdığı sistemik hata kayda geçer.
+            let auto = auto_escalate_enabled();
+            let _ = self.graph.append(&CanonicalEvent::new(
+                "user",
+                "s1_escalate",
+                &event.id,
+                serde_json::json!({
+                    "criteria": "9.3.1-yeni-desen",
+                    "auto": auto
+                }),
+            ));
+            // Otomatik yükseltme yalnız THORNHILL_S2_AUTO=1 ile (maliyet koruması §10);
+            // varsayılan davranış: yalnız kaydet, kullanıcı sorarsa S2 (§9.3.3).
+            if auto {
+                // Bilinçli olarak SESSİZ: otomatik S2 çağrısı rate limit'e tabidir;
+                // sonuç chip kanalından döner (Faz 6'da zenginleştirilecek).
+                let brain = Arc::clone(&self.brain);
+                let question = format!(
+                    "Sistemde açıklanamayan bir hata oluştu: {} {} — neden olabilir?",
+                    event.kind,
+                    event
+                        .ctx
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("")
+                );
+                tokio::spawn(async move {
+                    if let Err(e) = brain.answer_chip(&question).await {
+                        debug!("Otomatik S2 yükseltmesi atlandı: {}", e);
+                    }
+                });
+            }
+        }
+
+        // Faz 5 — G3: TAM boru hattı ölçümü (kalıcılık + korelasyon + S1 + günlük)
+        let elapsed = pipeline_start.elapsed();
+        if elapsed > std::time::Duration::from_millis(1) {
+            tracing::warn!(
+                "⚠️ G3 boru hattı ihlali: ingest toplam {:?} (bütçe <1 ms; yalnız S1 kuralı değil)",
+                elapsed
+            );
+        } else {
+            debug!(
+                "ingest boru hattı: {:?} (bütçe içinde, s1_fired={})",
+                elapsed, s1_fired
+            );
         }
         true
     }
@@ -134,15 +185,12 @@ impl BusServer {
                 fs::create_dir_all(parent)?;
                 let perms = fs::Permissions::from_mode(0o700);
                 fs::set_permissions(parent, perms)?;
-                debug!("Soket dizini 0700 izinleriyle oluşturuldu: {:?}", parent);
             }
         }
-
         if path.exists() {
             debug!("Bayat soket dosyası temizleniyor: {:?}", path);
             let _ = fs::remove_file(path);
         }
-
         Ok(())
     }
 
@@ -301,7 +349,7 @@ impl BusServer {
                     serde_json::json!({
                         "v": 1,
                         "daemon": "thornhilld",
-                        "features": ["sensory", "graph", "chip", "s1_reflex", "actuator", "s2_brain"],
+                        "features": ["sensory", "graph", "chip", "s1_reflex", "actuator", "s2_brain", "stats", "escalate_log"],
                         "status": "ready"
                     }),
                 )
@@ -312,7 +360,6 @@ impl BusServer {
                 if !self.ingest(event) {
                     return WireResponse::err(req, "Olay kalıcılaştırılamadı");
                 }
-                debug!("Kanonik olay işlendi (graf + yayın + S1 + §6.3): {}", id);
                 WireResponse::ok(req, serde_json::json!({ "id": id }))
             }
             WireRequest::Sub { req, filter } => {
@@ -327,7 +374,11 @@ impl BusServer {
                 Ok(rows) => WireResponse::ok(req, serde_json::json!({ "rows": rows })),
                 Err(e) => WireResponse::err(req, format!("Graf sorgusu hatası: {}", e)),
             },
-            // Faz 2.1: §8.5 dağıtım; Faz 3: ask_llm artık gerçek S2.
+            // Faz 5: denetim bulgusu #5 — stats artık canlıya bağlı.
+            WireRequest::Stats { req } => match self.graph.stats() {
+                Ok(s) => WireResponse::ok(req, s),
+                Err(e) => WireResponse::err(req, format!("Stats hatası: {}", e)),
+            },
             WireRequest::ChipAct {
                 req,
                 chip_id,
@@ -343,7 +394,7 @@ impl BusServer {
                             "user",
                             "chip.dismiss",
                             &chip_id,
-                            serde_json::json!({"reason":"expired_or_unknown"}),
+                            serde_json::json!({"reason": "expired_or_unknown"}),
                         ));
                         return WireResponse::err(
                             req,
@@ -358,13 +409,10 @@ impl BusServer {
                     .or_else(|| chip.actions.first())
                 {
                     Some(a) => a.clone(),
-                    None => {
-                        return WireResponse::err(req, "Çipte yürütülebilir eylem yok");
-                    }
+                    None => return WireResponse::err(req, "Çipte yürütülebilir eylem yok"),
                 };
 
                 if !confirm {
-                    // Önizleme: hiçbir şey çalışmaz
                     use crate::actuator::ladder_check;
                     return match ladder_check(&action.risk, false) {
                         crate::actuator::Decision::Refused(reason) => {
@@ -389,16 +437,15 @@ impl BusServer {
                     };
                 }
 
-                // confirm=true
                 match action.action_type.as_str() {
-                    // Faz 3: ask_llm → gerçek S2 (rate limit "chip" sınıfı, §10)
                     "ask_llm" => {
                         let question = action
                             .payload
                             .get("question")
                             .and_then(|q| q.as_str())
-                            .unwrap_or("Bu hatayı açıkla");
-                        match self.brain.answer_chip(question).await {
+                            .unwrap_or("Bu hatayı açıkla")
+                            .to_string();
+                        match self.brain.answer_chip(&question).await {
                             Ok(ans) => {
                                 let _ = self.graph.append(&CanonicalEvent::new(
                                     "user",
@@ -448,7 +495,6 @@ impl BusServer {
                                     "dry_run": true, "note": note,
                                 }),
                             ),
-
                             crate::actuator::Outcome::Refused { reason } => {
                                 WireResponse::err(req, format!("Reddedildi: {}", reason))
                             }
@@ -456,12 +502,10 @@ impl BusServer {
                     }
                 }
             }
-            // Faz 3 — §9.3.3: kullanıcı sorusu her zaman S2.
             WireRequest::Ask { req, question } => {
                 info!("❓ S2 sorgusu alındı: {:?}", question);
                 match self.brain.answer_query(&question).await {
                     Ok(ans) => {
-                        // S2 çağrısı da grafe iz bırakır (hata ayıklama için)
                         let _ = self.graph.append(&CanonicalEvent::new(
                             "user",
                             "s2_query",
@@ -480,7 +524,6 @@ impl BusServer {
                     Err(e) => WireResponse::err(req, e),
                 }
             }
-            // Faz 3 — §8.6: unutma hakkı.
             WireRequest::Forget { req, before_ts } => match self.graph.forget_before(before_ts) {
                 Ok((events, edges)) => WireResponse::ok(
                     req,
