@@ -43,7 +43,8 @@ QtObject {
 
         parser: SplitParser {
             // NDJSON: satır sınırlı tel protokolü (RFC-001 §7)
-            onSplitData: data => root._onLine(data)
+            splitMarker: "\n"
+            onRead: data => root._onLine(data)
         }
 
         onConnectedChanged: {
@@ -90,8 +91,8 @@ QtObject {
             console.warn("[thornhill] soket bağlı değil; mesaj gönderilemedi")
             return
         }
-        // Not: sürüme göre socket.writer.write() / socket.write()
-        root._socket.writer.write(line + "\n")
+        root._socket.write(line + "\n")
+        root._socket.flush()
     }
 
     function _handshake() {
@@ -159,19 +160,20 @@ QtObject {
             root.chips = next
     }
 
+    property Timer _reconnectTimer: Timer {
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            if (!root.connected && root.shouldConnect)
+                root._socket.connected = true
+        }
+    }
+
     function _scheduleReconnect() {
         // Üstel geri çekilme (bağlantı yönetimi; polling değil — Aksiyom 2)
         const wait = root.backoffMs
         root.backoffMs = Math.min(root.backoffMs * 2, 30000)
-        Qt.callLater(function () {
-            Timer {
-                interval: wait
-                running: true
-                onTriggered: {
-                    if (!root.connected && root.shouldConnect)
-                        root._socket.connected = true
-                }
-            }
-        })
+        root._reconnectTimer.interval = wait
+        root._reconnectTimer.restart()
     }
 }

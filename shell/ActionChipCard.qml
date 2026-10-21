@@ -14,28 +14,30 @@ import QtQuick.Layouts
 Rectangle {
     id: card
 
-    required property var chip        // ThornhillBridge.chips[id] girdisi
-    required property var bridge      // ThornhillBridge örneği
+    property var chip: null           // ThornhillBridge.chips[id] girdisi
+    property var bridge: null         // ThornhillBridge örneği
     property bool previewing: false   // "hold-to-confirm" evresi
 
+    visible: chip !== null && chip !== undefined
     radius: 10
     color: "#1e2229"
     border.color: previewing ? "#e0af68" : "#3b4261"
     border.width: previewing ? 2 : 1
 
-    implicitHeight: layout.implicitHeight + 24
+    implicitHeight: (!card.chip) ? 0 : (layout.implicitHeight + 24)
 
     ColumnLayout {
         id: layout
         anchors.fill: parent
         anchors.margins: 12
         spacing: 6
+        visible: card.chip !== null
 
         RowLayout {
             Layout.fillWidth: true
             Label {
                 Layout.fillWidth: true
-                text: card.chip.title
+                text: card.chip ? (card.chip.title || "") : ""
                 color: "#e06c75"
                 font.bold: true
                 elide: Text.ElideRight
@@ -43,7 +45,7 @@ Rectangle {
                 wrapMode: Text.Wrap
             }
             Label {
-                text: "güven " + Math.round(card.chip.conf * 100) + "%"
+                text: "güven " + Math.round((card.chip ? (card.chip.conf || 1.0) : 1.0) * 100) + "%"
                 color: "#5c6370"
                 font.pixelSize: 10
             }
@@ -51,7 +53,7 @@ Rectangle {
 
         Label {
             Layout.fillWidth: true
-            text: card.chip.why
+            text: card.chip ? (card.chip.why || "") : ""
             color: "#abb2bf"
             font.pixelSize: 11
             wrapMode: Text.Wrap
@@ -59,9 +61,9 @@ Rectangle {
 
         // Denetim kararı: exec komutu tam ve mono gösterilir (gizli enjeksiyon yok)
         Label {
-            visible: card.chip.execCmd !== ""
+            visible: card.chip ? ((card.chip.execCmd || "") !== "") : false
             Layout.fillWidth: true
-            text: "⚑ çalıştırılacak: " + card.chip.execCmd
+            text: "⚑ çalıştırılacak: " + (card.chip ? card.chip.execCmd : "")
             color: "#e0af68"
             font.family: "monospace"
             font.pixelSize: 10
@@ -74,10 +76,11 @@ Rectangle {
             implicitHeight: 3
             color: "#3b4261"
             Rectangle {
-                property real remain: {
-                    const left = card.chip.deadline - Date.now()
-                    return Math.max(0, Math.min(1, left / card.chip.ttlMs))
-                }
+                id: ttlBar
+                property real now: Date.now()
+                property real remain: (card.chip && card.chip.ttlMs) 
+                    ? Math.max(0, Math.min(1, (card.chip.deadline - now) / card.chip.ttlMs))
+                    : 0
                 anchors.left: parent.left
                 height: parent.height
                 width: parent.width * remain
@@ -87,7 +90,7 @@ Rectangle {
                     interval: 1000
                     running: true
                     repeat: true
-                    onTriggered: card.chip.deadline = card.chip.deadline // Qt binding tetikleyici
+                    onTriggered: ttlBar.now = Date.now()
                 }
             }
         }
@@ -97,7 +100,7 @@ Rectangle {
             spacing: 8
 
             Repeater {
-                model: card.chip.labels
+                model: (card.chip && card.chip.labels) ? card.chip.labels : []
 
                 Button {
                     required property string modelData
@@ -105,7 +108,7 @@ Rectangle {
                     text: {
                         if (!card.previewing)
                             return modelData
-                        const a = card.chip.actions[index]
+                        const a = card.chip ? card.chip.actions[index] : null
                         return (a && (a.risk === "low" || a.risk === "medium"))
                             ? modelData + " (basılı tut)" : modelData
                     }
@@ -118,7 +121,7 @@ Rectangle {
                         property bool holding: false
 
                         onPressed: {
-                            const a = card.chip.actions[index]
+                            const a = card.chip ? card.chip.actions[index] : null
                             if (a && (a.risk === "low" || a.risk === "medium")) {
                                 if (!card.previewing) {
                                     card.previewing = true   // 1. tık: yalnız önizleme
@@ -130,9 +133,10 @@ Rectangle {
                         }
                         onReleased: holding = false
                         onClicked: {
-                            const a = card.chip.actions[index]
+                            const a = card.chip ? card.chip.actions[index] : null
                             if (a && a.risk === "none") {
-                                card.bridge.act(card.chip.id, modelData, true) // risk none: anında
+                                if (card.bridge)
+                                    card.bridge.act(card.chip.id, modelData, true) // risk none: anında
                             }
                         }
 
@@ -142,7 +146,8 @@ Rectangle {
                             onTriggered: {
                                 if (hold.holding) {
                                     card.previewing = false
-                                    card.bridge.act(card.chip.id, modelData, true)
+                                    if (card.bridge)
+                                        card.bridge.act(card.chip.id, modelData, true)
                                 }
                             }
                         }

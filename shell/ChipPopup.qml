@@ -18,7 +18,7 @@ ShellRoot {
     id: shellRoot
 
     ThornhillBridge {
-        id: bridge
+        id: thornhillBridge
     }
 
     // ---- Çip yığını (ekranın sağ altı) ----
@@ -40,23 +40,13 @@ ShellRoot {
 
             Repeater {
                 // Yeni çipler üste: Object.keys ters sırayla
-                model: Object.keys(bridge.chips).reverse()
+                model: Object.keys(thornhillBridge.chips).reverse()
 
                 ActionChipCard {
                     required property string modelData
-                    chip: bridge.chips[modelData]
-                    bridge: bridge
+                    chip: thornhillBridge.chips ? (thornhillBridge.chips[modelData] || null) : null
+                    bridge: thornhillBridge
                     Layout.fillWidth: true
-
-                    Connections {
-                        target: bridge
-                        function onChipExpired(chipId) {
-                            if (chipId === modelData)
-                                bridge.chips = Object.fromEntries(
-                                    Object.entries(bridge.chips).filter(([k]) => k !== chipId)
-                                )
-                        }
-                    }
                 }
             }
 
@@ -71,14 +61,15 @@ ShellRoot {
         anchors.right: true
         margins.top: 8
         margins.right: 16
-        implicitWidth: eye.implicitWidth + 16
-        implicitHeight: eye.implicitHeight + 8
+        implicitWidth: eyeLabel.implicitWidth + 16
+        implicitHeight: eyeLabel.implicitHeight + 8
         color: "transparent"
 
         Label {
-            id: eye
-            text: bridge.connected ? "👁️" : "💤"
-            font.pixelSize: 14
+            id: eyeLabel
+            text: thornhillBridge.connected ? "👁️ Thornhill" : "💤 Thornhill"
+            color: thornhillBridge.connected ? "#98c379" : "#5c6370"
+            font.pixelSize: 13
         }
     }
 }
