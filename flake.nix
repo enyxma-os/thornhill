@@ -45,10 +45,11 @@
           buildInputs = with pkgs; [ sqlite ];
 
           postInstall = ''
-            mkdir -p $out/share/thornhill/docs $out/share/thornhill/shell-hook
-            cp docs/rfc-001.md $out/share/thornhill/docs/
+            mkdir -p $out/share/thornhill/docs $out/share/thornhill/shell-hook $out/share/thornhill/shell
+            cp docs/rfc-001.md docs/DEPLOY.md $out/share/thornhill/docs/
             cp shell-hook/thornhill.sh $out/share/thornhill/shell-hook/
             cp shell-hook/thornhill.fish $out/share/thornhill/shell-hook/
+            cp -r shell/* $out/share/thornhill/shell/
           '';
 
           meta = with pkgs.lib; {
