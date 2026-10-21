@@ -48,6 +48,7 @@
             mkdir -p $out/share/thornhill/docs $out/share/thornhill/shell-hook
             cp docs/rfc-001.md $out/share/thornhill/docs/
             cp shell-hook/thornhill.sh $out/share/thornhill/shell-hook/
+            cp shell-hook/thornhill.fish $out/share/thornhill/shell-hook/
           '';
 
           meta = with pkgs.lib; {
@@ -74,18 +75,15 @@
             };
 
             config = lib.mkIf cfg.enable {
-              # Kullanıcı başına sistemd servisi: her oturum açan kullanıcı için
-              # ayrı thornhilld (RFC-001: kullanıcı başına daemon modeli).
               systemd.user.services.thornhilld = {
                 description = "Enyxma Thornhill Cognitive Daemon";
                 wantedBy = [ "default.target" ];
-                # Aksiyom 2 destek: servisi login hedefine bağla
                 partOf = [ "graphical-session.target" ];
                 serviceConfig = {
                   ExecStart = "${cfg.package}/bin/thornhilld";
                   Restart = "on-failure";
                   RestartSec = "2s";
-                  # Sertleştirme (§8 güvenlik modeliyle uyumlu)
+                  # Sertleştirme (RFC-001 §8 uyumlu)
                   PrivateTmp = true;
                   NoNewPrivileges = true;
                   ProtectSystem = "strict";
@@ -100,10 +98,18 @@
             };
           };
 
-        # Evrensel Home Manager Modülü (kullanıcı düzeyi + shell hook entegrasyonu)
+        # Evrensel Home Manager Modülü (kullanıcı düzeyi + Fish/Zsh/Bash kancaları)
         homeManagerModules.default = { config, lib, pkgs, ... }:
           let
             cfg = config.services.thornhill;
+            shellHookSh = ''
+              # Thornhill duyusal kancası (yalnız hata anında yazar; ENXIO-düzeltmeli v2)
+              source ${cfg.package}/share/thornhill/shell-hook/thornhill.sh
+            '';
+            shellHookFish = ''
+              # Thornhill duyusal kancası (yalnız hata anında yazar; ENXIO-düzeltmeli v2)
+              source ${cfg.package}/share/thornhill/shell-hook/thornhill.fish
+            '';
           in
           {
             options.services.thornhill = {
@@ -113,13 +119,12 @@
                 default = self.packages.${pkgs.system}.default;
                 description = "Thornhill paketi";
               };
-              # Shell hook: zsh veya bash rc'ye source satırı ekler (§4.1)
               enableShellHook = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
                 description = ''
-                  Kabuk hata kancasını (thornhill.sh) etkileşimli kabuğa bağla.
-                  Yalnız exit_code != 0 iken yazar; Thornhill kapalıysa sessizce pas geçer.
+                  Kabuk hata kancasını etkileşimli kabuklara bağla.
+                  Fish, Zsh ve Bash desteklenir (kabuk başına uygun köprü source edilir).
                 '';
               };
             };
@@ -143,16 +148,13 @@
                   };
                 };
               })
-              # Shell hook entegrasyonu: HM üzerinden zsh/bash'e source satırı
+              # Shell hook entegrasyonu — her kabuk kendi dosyasını source eder.
+              # mkIf koşulları kullanıcıda o kabuğun açık olup olmadığına göre otomatik
+              # devreye girer (programs.<shell>.enable yoksa seçenek tipi default verir).
               (lib.mkIf (cfg.enable && cfg.enableShellHook) {
-                programs.zsh.initExtra = lib.mkOrder 1200 ''
-                  # Thornhill duyusal kancası (yalnız hata anında yazar)
-                  source ${cfg.package}/share/thornhill/shell-hook/thornhill.sh
-                '';
-                programs.bash.initExtra = lib.mkOrder 1200 ''
-                  # Thornhill duyusal kancası (yalnız hata anında yazar)
-                  source ${cfg.package}/share/thornhill/shell-hook/thornhill.sh
-                '';
+                programs.fish.interactiveShellInit = lib.mkOrder 1200 shellHookFish;
+                programs.zsh.initExtra = lib.mkOrder 1200 shellHookSh;
+                programs.bash.initExtra = lib.mkOrder 1200 shellHookSh;
               })
             ];
           };
