@@ -1,8 +1,7 @@
 //! RFC-001 §6: Nedensellik Grafiği (SQLite, WAL).
 //!
 //! Tüm erişim daemon içindendir; dış süreçler yalnızca UDS sorgu mesajlarıyla
-//! okur (RFC-001 §6.1). Bu dosya §6.2'deki DDL'i birebir uygular.
-//! Faz 2 Adım 2.2: link()/ensure_lesson() ile §6.3 destek mekanizması eklendi.
+//! okur (RFC-001 §6.1). §6.3 destek mekanizması + §8.6 unutma hakkı dahil.
 
 use crate::protocol::CanonicalEvent;
 use rusqlite::{params, Connection};
@@ -128,7 +127,6 @@ impl GraphStore {
     }
 
     /// §6.3: İki olay arasına kenar kurar veya mevcut kenarın desteğini artırır.
-    /// Yeni destek sayısını döner.
     pub fn link(&self, src_ev: &str, dst_ev: &str, rel: &str, conf: f64) -> GraphResult<i64> {
         let conn = self.conn.lock().expect("graph mutex zehirlendi");
         let now = std::time::SystemTime::now()
@@ -151,7 +149,6 @@ impl GraphStore {
     }
 
     /// §6.3: Son `window_ms` içindeki olayları eskiden yeniye sıralı döner.
-    /// Korelasyon penceresi (örn. git.dirty → build hatası) için kullanılır.
     pub fn recent_within(&self, window_ms: u64) -> GraphResult<Vec<(String, String, String)>> {
         let conn = self.conn.lock().expect("graph mutex zehirlendi");
         let now = std::time::SystemTime::now()
@@ -199,6 +196,26 @@ impl GraphStore {
             params![pattern, summary, remedy, now],
         )?;
         Ok(true)
+    }
+
+    /// §8.6 — Unutma hakkı: verilen zamandan eski events'i siler.
+    /// Silinecek olaylara işaret eden kenarlar da temizlenir (kalıntı bırakmaz).
+    /// lessons/habits bilinçli olarak korunur (kullanıcı ayrıca silebilir).
+    pub fn forget_before(&self, before_ts_ms: i64) -> GraphResult<(usize, usize)> {
+        let conn = self.conn.lock().expect("graph mutex zehirlendi");
+        // Önce eski olaylara bağlı kenarları sil
+        let edge_deleted = conn.execute(
+            "DELETE FROM edges WHERE src_ev IN (SELECT id FROM events WHERE ts < ?1)
+                OR dst_ev IN (SELECT id FROM events WHERE ts < ?1)",
+            params![before_ts_ms],
+        )?;
+        let event_deleted =
+            conn.execute("DELETE FROM events WHERE ts < ?1", params![before_ts_ms])?;
+        info!(
+            "🧹 Unutma hakkı: {} olay, {} kenar silindi (ts < {})",
+            event_deleted, edge_deleted, before_ts_ms
+        );
+        Ok((event_deleted, edge_deleted))
     }
 
     /// RFC-001 §7.1 `query` op'u: yapılandırılmış, salt-okunur sorgu.
@@ -355,5 +372,28 @@ mod tests {
         let rows = g.query("lessons", 10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["pattern"], "p");
+    }
+
+    #[test]
+    fn forget_before_removes_events_and_edges_without_remnants() {
+        let g = temp_store();
+        let a = ev("git", "git.dirty", "repo");
+        let b = ev("shell", "cmd.done", "123");
+        g.append(&a).unwrap();
+        g.append(&b).unwrap();
+        g.link(&a.id, &b.id, "caused", 0.5).unwrap();
+        g.ensure_lesson("l", "s", None).unwrap();
+
+        // Her ikisinden de eski bir zaman dilimi: her şey silinmeli
+        let (ne, nd) = g.forget_before(i64::MAX / 2).unwrap();
+        assert_eq!(ne, 2);
+        assert_eq!(nd, 1);
+
+        // Kenarlar olaylara foreign key ile bağlıydı — kalıntı olmamalı
+        let stats = g.stats().unwrap();
+        assert_eq!(stats["events"], 0);
+        assert_eq!(stats["edges"], 0);
+        // lessons bilinçli olarak korunur (§8.6)
+        assert_eq!(stats["lessons"], 1);
     }
 }

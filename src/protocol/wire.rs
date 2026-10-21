@@ -36,7 +36,6 @@ pub enum WireRequest {
         limit: u32,
     },
     /// RFC-001 §7.2: Action Chip onay/ret.
-    /// `action_label` hangi eylemin yürütüleceğini seçer (yoksa ilk eylem).
     #[serde(rename = "chip.act")]
     ChipAct {
         #[serde(default)]
@@ -45,6 +44,19 @@ pub enum WireRequest {
         confirm: bool,
         #[serde(default)]
         action_label: Option<String>,
+    },
+    /// Faz 3 — §9.3.3: Kullanıcı sorusu (her zaman S2'ye gider).
+    Ask {
+        #[serde(default)]
+        req: String,
+        question: String,
+    },
+    /// Faz 3 — §8.6: Unutma hakkı (verilen zamandan eski olayları sil).
+    Forget {
+        #[serde(default)]
+        req: String,
+        /// epoch ms — bundan eski events silinir
+        before_ts: i64,
     },
 }
 
