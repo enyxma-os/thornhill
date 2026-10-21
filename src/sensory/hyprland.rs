@@ -19,8 +19,8 @@ use tokio::net::unix::OwnedReadHalf;
 use tokio::net::UnixStream;
 use tracing::{debug, info, warn};
 
-/// Olay türlerini sınıflandıran geri çağrı: duyu katmanı bus'a bağımlı olmasın.
-pub type EventSink = tokio::sync::mpsc::UnboundedSender<CanonicalEvent>;
+/// Duyu olaylarını ileten kanal göndericisi (EventSink).
+pub type EventSink = tokio::sync::mpsc::Sender<CanonicalEvent>;
 
 /// socket2 yolunu çözer (ADR-062 uyumlu keşif).
 pub fn discover_socket_path() -> Option<PathBuf> {
@@ -190,9 +190,15 @@ impl HyprlandSensory {
                                     .unwrap_or(0);
                                 if let Some(ev) = parse_socket2_line(&line, ts) {
                                     debug!("hyprland olayı: {} {}", ev.kind, ev.subject);
-                                    if sink.send(ev).is_err() {
-                                        info!("Olay havuzu kapandı; duyu döngüsü sonlanıyor");
-                                        return;
+                                    match sink.try_send(ev) {
+                                        Ok(_) => {}
+                                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                            warn!("Duyu kuyruğu dolu (1024); olay atıldı (coalesce §4.2)");
+                                        }
+                                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                            info!("Olay havuzu kapandı; duyu döngüsü sonlanıyor");
+                                            return;
+                                        }
                                     }
                                 }
                             }

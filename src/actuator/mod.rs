@@ -4,7 +4,7 @@
 //! - `high` risk v1'de YASAK.
 //! - `medium` (exec) yalnızca `confirm=true` ile çalışır; 10 sn timeout.
 //! - `low` (apply_patch) v1'de yalnız dry-run (`git apply --check`).
-//! - `none` (ask_llm) S2 Faz 3'te bağlanacak; şimdilik stub.
+//! - `none` (ask_llm) S2 Brain katmanı tarafından doğrudan yönetilir.
 //! - Her yürütme denetim olayı (`user.chip.accept`) olarak grafe yazılır.
 
 use crate::protocol::{ActionChip, ChipAction};
@@ -110,9 +110,6 @@ pub enum Outcome {
     DryRunOk {
         note: String,
     },
-    Stub {
-        note: String,
-    },
     Refused {
         reason: String,
     },
@@ -210,9 +207,7 @@ pub async fn execute_action(action: &ChipAction, _chip: &ActionChip) -> Outcome 
                 },
             }
         }
-        "ask_llm" => Outcome::Stub {
-            note: "S2 bilişsel katman Faz 3'te bağlanacak; soru kuyruğa alındı".into(),
-        },
+
         other => Outcome::Refused {
             reason: format!("bilinmeyen eylem türü: {}", other),
         },

@@ -206,8 +206,10 @@ impl BusServer {
         }
 
         let (read_half, write_half) = stream.into_split();
-        let mut framed_read = FramedRead::new(read_half, LinesCodec::new());
-        let mut framed_write = FramedWrite::new(write_half, LinesCodec::new());
+        let mut framed_read =
+            FramedRead::new(read_half, LinesCodec::new_with_max_length(1024 * 1024));
+        let mut framed_write =
+            FramedWrite::new(write_half, LinesCodec::new_with_max_length(1024 * 1024));
 
         let mut sub_filter: Option<SubFilter> = None;
         let mut chip_streaming = false;
@@ -446,12 +448,7 @@ impl BusServer {
                                     "dry_run": true, "note": note,
                                 }),
                             ),
-                            crate::actuator::Outcome::Stub { note } => WireResponse::ok(
-                                req,
-                                serde_json::json!({
-                                    "dispatched": false, "action": action.action_type, "note": note,
-                                }),
-                            ),
+
                             crate::actuator::Outcome::Refused { reason } => {
                                 WireResponse::err(req, format!("Reddedildi: {}", reason))
                             }

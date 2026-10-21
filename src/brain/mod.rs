@@ -85,10 +85,10 @@ impl Brain {
 
     async fn answer(&self, question: &str, trigger_class: &str) -> Result<S2Answer, String> {
         // §10 rate limit: aynı tetik sınıfı için pencere içinde ikinci çağrı reddedilir.
+        let window = rate_limit_for(trigger_class);
+        let now = std::time::Instant::now();
         {
-            let mut last = self.last_call.lock().await;
-            let window = rate_limit_for(trigger_class);
-            let now = std::time::Instant::now();
+            let last = self.last_call.lock().await;
             if let Some(prev) = last.get(trigger_class) {
                 if now.duration_since(*prev) < window {
                     return Err(format!(
@@ -97,7 +97,6 @@ impl Brain {
                     ));
                 }
             }
-            last.insert(trigger_class.to_string(), now);
         }
 
         let context_pack = self.build_context_pack(question);
@@ -151,6 +150,11 @@ impl Brain {
 
         if answer.confidence > 0.0 && answer.confidence < 0.5 {
             debug!("S2 düşük güvenle yanıt verdi: {:.2}", answer.confidence);
+        }
+        // Başarılı çağrı sonrası rate limit damgasını kaydet
+        {
+            let mut last = self.last_call.lock().await;
+            last.insert(trigger_class.to_string(), std::time::Instant::now());
         }
         Ok(answer)
     }
@@ -225,5 +229,5 @@ mod tests {
     }
 
     // Not: answer() ağ çağrısı yapar; birim testi yalnız saf parçaları kapsar.
-    // Uçtan uca S2 testi canlı Ollama ile elle yapılır (APPLY-NOTES bölüm 3).
+    // Uçtan uca S2 testi canlı Ollama ile elle yapılır (docs/DEPLOY.md).
 }
