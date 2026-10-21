@@ -71,6 +71,43 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         confirm: bool,
     },
+    /// S2 bilişsel katmana soru sor (RFC-001 §9.3.3: her zaman S2)
+    Ask {
+        /// Soru metni (örn: "son derleme hatası neden kaynaklandı?")
+        question: String,
+    },
+    /// Unutma hakkı (RFC-001 §8.6): eski olayları grafte sil
+    Forget {
+        /// Bundan eskisini sil; ör. "1d", "7d", "30d" veya epoch ms
+        #[arg(long, default_value = "30d")]
+        before: String,
+    },
+}
+
+/// "1d"/"7d"/"30d" gibi göreceli süreleri epoch ms'e çevirir.
+fn parse_before(s: &str) -> Result<i64, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    if let Ok(ms) = s.parse::<i64>() {
+        return Ok(now - ms);
+    }
+
+    let (num, unit) = s.split_at(s.len().saturating_sub(1));
+    let n: i64 = num.parse().map_err(|_| format!("Geçersiz süre: {}", s))?;
+    let days = match unit {
+        "d" => n,
+        "h" => return Ok(now - n * 3_600_000),
+        _ => {
+            return Err(format!(
+                "Geçersiz süre birimi: {} (d veya h kullanın)",
+                unit
+            ))
+        }
+    };
+    Ok(now - days * 86_400_000)
 }
 
 #[tokio::main]
@@ -177,6 +214,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 confirm,
             };
             let resp = client.call(&req).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
+        }
+        Commands::Ask { question } => {
+            println!("🧠 S2 düşünüyor: {:?}", question);
+            let start = Instant::now();
+            let req = WireRequest::Ask {
+                req: "ask_1".to_string(),
+                question: question.clone(),
+            };
+            let resp = client.call(&req).await?;
+            println!("(süre: {:?})", start.elapsed());
+            println!("{}", serde_json::to_string_pretty(&resp)?);
+        }
+        Commands::Forget { before } => {
+            let before_ts = parse_before(&before)?;
+            let req = WireRequest::Forget {
+                req: "forget_1".to_string(),
+                before_ts,
+            };
+            let resp = client.call(&req).await?;
+            println!("🧹 Unutma işlemi tamamlandı (before={})", before);
             println!("{}", serde_json::to_string_pretty(&resp)?);
         }
     }

@@ -1,4 +1,5 @@
 use crate::actuator::{execute_action, ChipRegistry};
+use crate::brain::Brain;
 use crate::graph::GraphStore;
 use crate::protocol::{ActionChip, CanonicalEvent, SubFilter, WireRequest, WireResponse};
 use crate::reflex::ReflexEngine;
@@ -24,8 +25,7 @@ pub fn resolve_socket_path() -> PathBuf {
     }
 }
 
-/// §6.3 korelasyon penceresi: kenar kurmak için olaylar bu kadar yakınsa
-/// "caused" adayıdır (RFC-001 §6.3 deterministik kural seti).
+/// §6.3 korelasyon penceresi (ms)
 const CORRELATION_WINDOW_MS: u64 = 10_000;
 
 pub struct BusServer {
@@ -35,12 +35,13 @@ pub struct BusServer {
     chip_tx: broadcast::Sender<ActionChip>,
     graph: Arc<GraphStore>,
     reflex: Arc<ReflexEngine>,
-    /// Faz 2.1: canlı çip kayıt defteri (TTL + onay doğrulaması).
     registry: Arc<ChipRegistry>,
+    /// Faz 3: S2 bilişsel katman.
+    brain: Arc<Brain>,
 }
 
 impl BusServer {
-    pub fn new(socket_path: Option<PathBuf>, graph: Arc<GraphStore>) -> Self {
+    pub fn new(socket_path: Option<PathBuf>, graph: Arc<GraphStore>, brain: Arc<Brain>) -> Self {
         let path = socket_path.unwrap_or_else(resolve_socket_path);
         let (event_tx, _) = broadcast::channel(1024);
         let (chip_tx, _) = broadcast::channel(256);
@@ -52,20 +53,21 @@ impl BusServer {
             graph,
             reflex: Arc::new(ReflexEngine::new()),
             registry: Arc::new(ChipRegistry::new()),
+            brain,
         }
     }
 
     /// Duyu modülleri için içsel besleme yolu (Faz 1 Adım 4).
+    /// 1) kalıcılaştır → 2) §6.3 korelasyon → 3) S1 refleks.
     pub fn ingest(&self, event: CanonicalEvent) -> bool {
-        // 1) Olayı önce kalıcılaştır (tek gerçek kaynak; edges için foreign key şartı)
+        // 1) Olayı önce kalıcılaştır (edges foreign key şartı)
         if let Err(e) = self.graph.append(&event) {
             error!("Duyu olayı grafe yazılamadı: {}", e);
             return false;
         }
         let _ = self.event_tx.send(event.clone());
 
-        // 2) §6.3 Adım A: Penceredeki önceki olaylarla deterministik korelasyon.
-        // git.dirty / fs.write → cmd.done{exit≠0} zinciri "caused" kenarı kurar.
+        // 2) §6.3: pencere içindeki ilgili olaylarla "caused" kenarı kur
         if event.src == "shell" && event.kind == "cmd.done" {
             let failed = event
                 .ctx
@@ -74,45 +76,38 @@ impl BusServer {
                 .map(|c| c != 0)
                 .unwrap_or(false);
             if failed {
-                match self.graph.recent_within(CORRELATION_WINDOW_MS) {
-                    Ok(prior) => {
-                        for (pid, kind, _subject) in &prior {
-                            if pid == &event.id {
-                                continue;
-                            }
-                            let relevant = matches!(
-                                kind.as_str(),
-                                "git.dirty" | "git.commit" | "fs.write" | "proc.exec"
-                            );
-                            if relevant {
-                                match self.graph.link(pid, &event.id, "caused", 0.5) {
-                                    Ok(support) => {
-                                        debug!(
-                                            "§6.3 kenar: {} → {} (support={})",
-                                            kind, event.kind, support
-                                        );
-                                        // support >= 3 → lesson'a yüksel (§6.3 güçlendirme)
-                                        if support >= crate::graph::db::LESSON_SUPPORT_THRESHOLD {
-                                            let pattern = format!("{}->{}", kind, event.kind);
-                                            let summary = format!(
-                                                "{} olayı {} içinde {} kez {} ile sonuçlandı",
-                                                kind, CORRELATION_WINDOW_MS, support, event.kind
-                                            );
-                                            if let Ok(true) = self.graph.ensure_lesson(
-                                                &pattern,
-                                                &summary,
-                                                Some("komutu düzelt veya diff uygula"),
-                                            ) {
-                                                info!("📚 Yeni lesson öğrenildi: {}", pattern);
-                                            }
-                                        }
+                if let Ok(prior) = self.graph.recent_within(CORRELATION_WINDOW_MS) {
+                    for (pid, kind, _subject) in &prior {
+                        if pid == &event.id {
+                            continue;
+                        }
+                        let relevant = matches!(
+                            kind.as_str(),
+                            "git.dirty" | "git.commit" | "fs.write" | "proc.exec"
+                        );
+                        if relevant {
+                            if let Ok(support) = self.graph.link(pid, &event.id, "caused", 0.5) {
+                                debug!(
+                                    "§6.3 kenar: {} → {} (support={})",
+                                    kind, event.kind, support
+                                );
+                                if support >= crate::graph::db::LESSON_SUPPORT_THRESHOLD {
+                                    let pattern = format!("{}->{}", kind, event.kind);
+                                    let summary = format!(
+                                        "{} olayı {} içinde {} kez {} ile sonuçlandı",
+                                        kind, CORRELATION_WINDOW_MS, support, event.kind
+                                    );
+                                    if let Ok(true) = self.graph.ensure_lesson(
+                                        &pattern,
+                                        &summary,
+                                        Some("komutu düzelt veya diff uygula"),
+                                    ) {
+                                        info!("📚 Yeni lesson öğrenildi: {}", pattern);
                                     }
-                                    Err(e) => debug!("Kenar yazılamadı: {}", e),
                                 }
                             }
                         }
                     }
-                    Err(e) => debug!("Korelasyon penceresi okunamadı: {}", e),
                 }
             }
         }
@@ -120,7 +115,7 @@ impl BusServer {
         // 3) S1 Refleks (§9.1): LLM'siz, <1 ms.
         if let Some(mut chip) = self.reflex.evaluate(&event) {
             debug!("S1 çip üretti: {} ({})", chip.id, chip.title);
-            // S1 chip.why'sını §6.3 kenar bilgisiyle zenginleştir (nedensel gerekçe)
+            // Nedensel gerekçe zenginleştirmesi (§6.3 kenarlarından)
             if let Ok(rows) = self.graph.query("causal", 5) {
                 if !rows.is_empty() {
                     chip.why = format!("{} | graf: {} kenar destekli", chip.why, rows.len());
@@ -131,6 +126,7 @@ impl BusServer {
         }
         true
     }
+
     /// Soket dizinini 0700 izinleriyle oluşturur ve bayat soketi temizler.
     fn prepare_socket(path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
@@ -303,7 +299,7 @@ impl BusServer {
                     serde_json::json!({
                         "v": 1,
                         "daemon": "thornhilld",
-                        "features": ["sensory", "graph", "chip", "s1_reflex", "actuator"],
+                        "features": ["sensory", "graph", "chip", "s1_reflex", "actuator", "s2_brain"],
                         "status": "ready"
                     }),
                 )
@@ -329,7 +325,7 @@ impl BusServer {
                 Ok(rows) => WireResponse::ok(req, serde_json::json!({ "rows": rows })),
                 Err(e) => WireResponse::err(req, format!("Graf sorgusu hatası: {}", e)),
             },
-            // Faz 2.1: Gerçek §8.5 dağıtım.
+            // Faz 2.1: §8.5 dağıtım; Faz 3: ask_llm artık gerçek S2.
             WireRequest::ChipAct {
                 req,
                 chip_id,
@@ -338,11 +334,9 @@ impl BusServer {
             } => {
                 info!("ChipAct: {} (onay={})", chip_id, confirm);
 
-                // 1) Çip canlı mı? (TTL §7.2)
                 let chip = match self.registry.peek(&chip_id) {
                     Some(c) => c,
                     None => {
-                        // Dismiss grafe yazılır (§7.2) — model öğrenir.
                         let _ = self.graph.append(&CanonicalEvent::new(
                             "user",
                             "chip.dismiss",
@@ -356,7 +350,6 @@ impl BusServer {
                     }
                 };
 
-                // 2) Eylemi seç (action_label yoksa ilk)
                 let action = match action_label
                     .as_ref()
                     .and_then(|label| chip.actions.iter().find(|a| &a.label == label))
@@ -368,57 +361,10 @@ impl BusServer {
                     }
                 };
 
-                // 3) §8.5 merdiven kararı
-                if confirm {
-                    let outcome = execute_action(&action, &chip).await;
-                    // Denetim olayı: her yürütme grafe yazılır (§8.5)
-                    let (kind, ctx) = match &outcome {
-                        crate::actuator::Outcome::Exec { exit_code, .. } => (
-                            "chip.accept",
-                            serde_json::json!({"action": action.action_type, "exit_code": exit_code}),
-                        ),
-                        other => (
-                            "chip.accept",
-                            serde_json::json!({"action": action.action_type, "outcome": format!("{:?}", other)}),
-                        ),
-                    };
-                    let _ = self
-                        .graph
-                        .append(&CanonicalEvent::new("user", kind, &chip_id, ctx));
-                    self.registry.remove(&chip_id);
-
-                    match outcome {
-                        crate::actuator::Outcome::Exec {
-                            exit_code,
-                            stdout,
-                            stderr,
-                        } => WireResponse::ok(
-                            req,
-                            serde_json::json!({
-                                "dispatched": true, "action": action.action_type,
-                                "exit_code": exit_code, "stdout": stdout, "stderr": stderr,
-                            }),
-                        ),
-                        crate::actuator::Outcome::DryRunOk { note } => WireResponse::ok(
-                            req,
-                            serde_json::json!({
-                                "dispatched": true, "action": action.action_type, "dry_run": true, "note": note,
-                            }),
-                        ),
-                        crate::actuator::Outcome::Stub { note } => WireResponse::ok(
-                            req,
-                            serde_json::json!({
-                                "dispatched": false, "action": action.action_type, "note": note,
-                            }),
-                        ),
-                        crate::actuator::Outcome::Refused { reason } => {
-                            WireResponse::err(req, format!("Reddedildi: {}", reason))
-                        }
-                    }
-                } else {
-                    // confirm=false: yalnız merdiven önizlemesi — hiçbir şey çalışmaz.
+                if !confirm {
+                    // Önizleme: hiçbir şey çalışmaz
                     use crate::actuator::ladder_check;
-                    match ladder_check(&action.risk, false) {
+                    return match ladder_check(&action.risk, false) {
                         crate::actuator::Decision::Refused(reason) => {
                             WireResponse::err(req, format!("Reddedildi: {}", reason))
                         }
@@ -438,9 +384,117 @@ impl BusServer {
                                 "action": action.action_type, "risk": action.risk,
                             }),
                         ),
+                    };
+                }
+
+                // confirm=true
+                match action.action_type.as_str() {
+                    // Faz 3: ask_llm → gerçek S2 (rate limit "chip" sınıfı, §10)
+                    "ask_llm" => {
+                        let question = action
+                            .payload
+                            .get("question")
+                            .and_then(|q| q.as_str())
+                            .unwrap_or("Bu hatayı açıkla");
+                        match self.brain.answer_chip(question).await {
+                            Ok(ans) => {
+                                let _ = self.graph.append(&CanonicalEvent::new(
+                                    "user",
+                                    "chip.accept",
+                                    &chip_id,
+                                    serde_json::json!({"action": "ask_llm"}),
+                                ));
+                                WireResponse::ok(
+                                    req,
+                                    serde_json::json!({
+                                        "dispatched": true,
+                                        "action": "ask_llm",
+                                        "explanation": ans.explanation,
+                                        "remedy": ans.remedy,
+                                    }),
+                                )
+                            }
+                            Err(e) => WireResponse::err(req, e),
+                        }
+                    }
+                    _ => {
+                        let outcome = execute_action(&action, &chip).await;
+                        let _ = self.graph.append(&CanonicalEvent::new(
+                            "user",
+                            "chip.accept",
+                            &chip_id,
+                            serde_json::json!({"action": action.action_type}),
+                        ));
+                        self.registry.remove(&chip_id);
+
+                        match outcome {
+                            crate::actuator::Outcome::Exec {
+                                exit_code,
+                                stdout,
+                                stderr,
+                            } => WireResponse::ok(
+                                req,
+                                serde_json::json!({
+                                    "dispatched": true, "action": action.action_type,
+                                    "exit_code": exit_code, "stdout": stdout, "stderr": stderr,
+                                }),
+                            ),
+                            crate::actuator::Outcome::DryRunOk { note } => WireResponse::ok(
+                                req,
+                                serde_json::json!({
+                                    "dispatched": true, "action": action.action_type,
+                                    "dry_run": true, "note": note,
+                                }),
+                            ),
+                            crate::actuator::Outcome::Stub { note } => WireResponse::ok(
+                                req,
+                                serde_json::json!({
+                                    "dispatched": false, "action": action.action_type, "note": note,
+                                }),
+                            ),
+                            crate::actuator::Outcome::Refused { reason } => {
+                                WireResponse::err(req, format!("Reddedildi: {}", reason))
+                            }
+                        }
                     }
                 }
             }
+            // Faz 3 — §9.3.3: kullanıcı sorusu her zaman S2.
+            WireRequest::Ask { req, question } => {
+                info!("❓ S2 sorgusu alındı: {:?}", question);
+                match self.brain.answer_query(&question).await {
+                    Ok(ans) => {
+                        // S2 çağrısı da grafe iz bırakır (hata ayıklama için)
+                        let _ = self.graph.append(&CanonicalEvent::new(
+                            "user",
+                            "s2_query",
+                            &question,
+                            serde_json::json!({"confidence": ans.confidence}),
+                        ));
+                        WireResponse::ok(
+                            req,
+                            serde_json::json!({
+                                "explanation": ans.explanation,
+                                "remedy": ans.remedy,
+                                "confidence": ans.confidence,
+                            }),
+                        )
+                    }
+                    Err(e) => WireResponse::err(req, e),
+                }
+            }
+            // Faz 3 — §8.6: unutma hakkı.
+            WireRequest::Forget { req, before_ts } => match self.graph.forget_before(before_ts) {
+                Ok((events, edges)) => WireResponse::ok(
+                    req,
+                    serde_json::json!({
+                        "forgotten_events": events,
+                        "forgotten_edges": edges,
+                        "note": "lessons/habits korunur (RFC-001 §8.6)"
+                    }),
+                ),
+                Err(e) => WireResponse::err(req, format!("Unutma hatası: {}", e)),
+            },
         }
     }
 }

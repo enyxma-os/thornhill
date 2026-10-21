@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
+use thornhill::brain::{Brain, S2Config};
 use thornhill::bus::BusServer;
 use thornhill::graph::GraphStore;
 use thornhill::sensory::hyprland::HyprlandSensory;
@@ -44,12 +45,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     info!("============================================================");
-    info!("👁️  Enyxma Thornhill Daemon v0.1.0 (Faz 1, Adım 4: Hyprland duyu)");
+    info!("👁️  Enyxma Thornhill Daemon v0.1.0 (Faz 3: S2 bilişsel katman)");
     info!("   PID: {}", std::process::id());
     info!("   Manifesto: Bir uzuv sorulunca çalışır. Thornhill hiç sorulmadığı halde bakar.");
     info!("============================================================");
 
-    // RFC-001 §6: Nedensellik grafiği (SQLite WAL). Daemon içinde açılır.
+    // RFC-001 §6: Nedensellik grafiği (SQLite WAL).
     let graph = match GraphStore::open(args.db) {
         Ok(g) => Arc::new(g),
         Err(e) => {
@@ -58,7 +59,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
 
-    let server = Arc::new(BusServer::new(args.socket, graph));
+    // Faz 3: S2 bilişsel katman (Ollama uyumlu yerel endpoint, §9.2)
+    let s2_config = S2Config::from_env();
+    info!(
+        "🧠 S2 yapılandırması: endpoint={}, model={}",
+        s2_config.endpoint, s2_config.model
+    );
+    let brain = Arc::new(Brain::new(Arc::clone(&graph), s2_config));
+
+    let server = Arc::new(BusServer::new(args.socket, graph, brain));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Duyu modülleri (Faz 1 Adım 4): Hyprland socket2 -> ingest()
@@ -66,12 +75,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let (sink_tx, mut sink_rx) = tokio::sync::mpsc::unbounded_channel();
         let server_for_sensory = Arc::clone(&server);
 
-        // Duyu üreticisi: socket2 satırlarını kanonik olaylara çevirir.
         tokio::spawn(async move {
             HyprlandSensory::run(sink_tx).await;
         });
 
-        // Duyu tüketicisi: olayları bus'a (grafe + yayın) aktarır.
         tokio::spawn(async move {
             while let Some(event) = sink_rx.recv().await {
                 server_for_sensory.ingest(event);
