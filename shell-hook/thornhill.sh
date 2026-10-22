@@ -46,10 +46,20 @@ if [[ -n "$ZSH_VERSION" ]]; then
 
 # --- bash ---
 elif [[ -n "$BASH_VERSION" ]]; then
-  __thornhill_preexec_bash() { __THORNHILL_LAST_CMD="$BASH_COMMAND"; }
+  __thornhill_preexec_bash() {
+    case "$BASH_COMMAND" in
+      *starship*|*__thornhill*|*__zoxide*|*PROMPT_COMMAND*) ;;
+      *) __THORNHILL_LAST_CMD="$BASH_COMMAND" ;;
+    esac
+  }
   __thornhill_report_bash()  {
-    local code=$?
-    __thornhill_report "$code" "$__THORNHILL_LAST_CMD"
+    local code="${STARSHIP_CMD_STATUS:-$?}"
+    local cmd="$__THORNHILL_LAST_CMD"
+    if [[ -z "$cmd" || "$cmd" == *"starship"* || "$cmd" == *"__thornhill"* || "$cmd" == *"__zoxide"* ]]; then
+      cmd=$(fc -ln -1 2>/dev/null | sed -e 's/^[[:space:]]*//')
+      [[ -n "$cmd" ]] || cmd=$(HISTTIMEFORMAT= history 1 2>/dev/null | sed -e 's/^[ ]*[0-9]*[ ]*//')
+    fi
+    __thornhill_report "$code" "$cmd"
     __THORNHILL_LAST_CMD=""
   }
   trap '__thornhill_preexec_bash' DEBUG
