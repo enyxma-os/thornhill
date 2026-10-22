@@ -89,6 +89,8 @@
                   NoNewPrivileges = true;
                   ProtectSystem = "strict";
                   ProtectHome = "read-only";
+                  RuntimeDirectory = "thornhill";
+                  StateDirectory = "thornhill";
                   ReadWritePaths = [ "%t/thornhill" "%h/.local/state/thornhill" ];
                 };
                 environment = {
