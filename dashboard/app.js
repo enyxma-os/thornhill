@@ -20,10 +20,18 @@ const escapeHtml = (s) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])
   );
 
+function thFetch(url, init = {}) {
+  init.headers = init.headers || {};
+  if (window.__thToken) {
+    init.headers["X-Thornhill-Token"] = window.__thToken;
+  }
+  return fetch(url, init);
+}
+
 // ---------- Telemetri: statik sayaçlar ----------
 async function refreshStats() {
   try {
-    const r = await fetch("/api/stats");
+    const r = await thFetch("/api/stats");
     const s = await r.json();
     $("m-events").textContent = s.events ?? "—";
     $("m-edges").textContent = s.edges ?? "—";
@@ -100,8 +108,8 @@ const kindColor = (kind) =>
 async function refreshGraph() {
   try {
     const [evRes, edgeRes] = await Promise.all([
-      fetch("/api/query?q=recent&limit=100").then((r) => r.json()),
-      fetch("/api/query?q=causal&limit=60").then((r) => r.json()),
+      thFetch("/api/query?q=recent&limit=100").then((r) => r.json()),
+      thFetch("/api/query?q=causal&limit=60").then((r) => r.json()),
     ]);
 
     const counts = {}; // kind -> adet
@@ -176,19 +184,25 @@ function drawGraph() {
   });
 }
 
-// ---------- SSE: canlı olay + çip akışı ----------
-const es = new EventSource("/api/stream");
+// ---------- SSE: canlı olay ve çip akışı ----------
+let es = null;
+function initEventSource() {
+  const streamUrl = window.__thToken
+    ? "/api/stream?token=" + encodeURIComponent(window.__thToken)
+    : "/api/stream";
+  es = new EventSource(streamUrl);
+  es.onopen = () => {
+    $("eye").textContent = "👁️";
+    $("eye").classList.add("awake");
+  };
+  es.onerror = () => {
+    $("eye").textContent = "💤";
+    $("eye").classList.remove("awake");
+  };
+  es.onmessage = onSseMessage;
+}
 
-es.onopen = () => {
-  $("eye").textContent = "👁️";
-  $("eye").classList.add("awake");
-};
-es.onerror = () => {
-  $("eye").textContent = "💤";
-  $("eye").classList.remove("awake");
-};
-
-es.onmessage = (ev) => {
+function onSseMessage(ev) {
   let msg;
   try { msg = JSON.parse(ev.data); } catch { return; }
 
@@ -268,7 +282,7 @@ async function chipAct(chipId, actionLabel, needsConfirm, wrapEl) {
     return;
   }
   try {
-    const r = await fetch("/api/chip-act", {
+    const r = await thFetch("/api/chip-act", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Thornhill-Token": window.__thToken || "" },
       body: JSON.stringify({ chip_id: chipId, action_label: actionLabel, confirm: true }),
@@ -304,7 +318,7 @@ $("ask-form").addEventListener("submit", async (ev) => {
   const log = $("s2-log");
   log.insertAdjacentHTML("beforeend", `<div class="q">▶ ${escapeHtml(q)}</div><div class="a" id="pending">…düşünüyor</div>`);
   try {
-    const r = await fetch("/api/ask", {
+    const r = await thFetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question: q }),
@@ -331,7 +345,7 @@ document.querySelectorAll("button.forget").forEach((b) => {
     const beforeTs = Date.now() - days * 86400000;
     if (!confirm(`${days} günden eski olaylar silinsin mi? (lessons/habits korunur)`)) return;
     try {
-      const r = await fetch("/api/forget", {
+      const r = await thFetch("/api/forget", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Thornhill-Token": window.__thToken || "" },
         body: JSON.stringify({ before_ts: beforeTs }),
@@ -350,11 +364,20 @@ document.querySelectorAll("button.forget").forEach((b) => {
 
 // ---------- Başlatma ----------
 (async function init() {
-  try {
-    // Loopback + Host/Origin koruması altında token (mutasyon için)
-    const t = await fetch("/api/token").then((r) => r.json());
-    window.__thToken = t.token || "";
-  } catch { /* token'sız: yalnız okuma yolları çalışır */ }
+  const urlParams = new URLSearchParams(window.location.search);
+  const qToken = urlParams.get("token");
+  if (qToken) {
+    sessionStorage.setItem("thornhill_token", qToken);
+  }
+  window.__thToken = sessionStorage.getItem("thornhill_token") || "";
+  if (!window.__thToken) {
+    const entered = prompt("Thornhill erişim token'ını giriniz:\n(Token dosyası: $XDG_RUNTIME_DIR/thornhill/http.token)");
+    if (entered) {
+      window.__thToken = entered.trim();
+      sessionStorage.setItem("thornhill_token", window.__thToken);
+    }
+  }
+  initEventSource();
   refreshStats();
   refreshGraph();
   setInterval(refreshStats, 5000);

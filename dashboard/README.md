@@ -21,11 +21,10 @@ NUL ve gizli dosyalar (`.` öneki) reddedilir (birim testli).
 | Yöntem | Yol | Koruma | İşlev |
 |---|---|---|---|
 | GET | `/` , `/index.html`, `/style.css`, `/app.js`, `/d3.v7.min.js` | Host kontrolü | statik panel |
-| GET | `/api/stream` | Host kontrolü | SSE: `event.push` + `chip.push` canlı akış |
-| GET | `/api/stats` | Host kontrolü | graf telemetrisi (events/edges/lessons/habits) |
-| GET | `/api/query?q=recent\|causal\|lessons&limit=N` | Host kontrolü | yapılandırılmış graf sorgusu (§7.1) |
-| GET | `/api/token` | loopback + Host (CORS başlığı hiç konmaz) | mutasyon token'ı |
-| POST | `/api/ask` | Host + Origin | S2 sorusu (§9.3.3) |
+| GET | `/api/stream` | Host + Token | SSE: `event.push` + `chip.push` canlı akış |
+| GET | `/api/stats` | Host + Token | graf telemetrisi |
+| GET | `/api/query?q=recent\|causal\|lessons&limit=N` | Host + Token | yapılandırılmış graf sorgusu |
+| POST | `/api/ask` | Host + Origin + Token | S2 sorusu |
 | POST | `/api/forget` | Host + Origin + **token** | §8.6 unutma hakkı |
 | POST | `/api/chip-act` | Host + Origin + **token** | §7.2/§8.5 çip eylemi |
 
@@ -38,8 +37,7 @@ NUL ve gizli dosyalar (`.` öneki) reddedilir (birim testli).
   `Origin` ya yok ya loopback olmalı.
 - **Token:** açılışta `/dev/urandom`'dan 16 bayt hex üretilip
   `$XDG_RUNTIME_DIR/thornhill/http.token` (0600) dosyasına yazılır;
-  `/api/token` yalnız loopback + Host koruması altında sunulur (aynı kökenli
-  panel JS'i okur, çapraz köken okuyamaz). `Forget`/`chip-act` token ister.
+  Tüm sorgu, akış ve mutasyon isteklerinde `X-Thornhill-Token` başlığı veya `?token=` parametresi zorunludur.
 - **Body sınırı:** 64 KB üstü 413.
 
 ## Canlı test

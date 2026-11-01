@@ -235,8 +235,18 @@ async fn handle_conn(
         None => (target.clone(), None),
     };
 
-    // SSE: canlı olay + çip akışı (GET)
+    let q_params = parse_query(query.as_deref());
+    let req_token = headers
+        .get("x-thornhill-token")
+        .map(|s| s.as_str())
+        .or_else(|| q_params.get("token").map(|s| s.as_str()));
+
+    // SSE: canlı olay ve çip akışı
     if path == "/api/stream" && method == "GET" {
+        if !token_ok(&state.token, req_token) {
+            return respond(&mut writer, 401, "text/plain", b"missing or invalid token
+").await;
+        }
         return stream_sse(writer, state).await;
     }
 
@@ -248,35 +258,33 @@ async fn handle_conn(
         ("GET", "/app.js") => serve_static(&mut writer, &state, "app.js").await,
         ("GET", "/d3.v7.min.js") => serve_static(&mut writer, &state, "d3.v7.min.js").await,
 
-        // Dashboard mutasyonları için token (yalnız loopback + Host/Origin koruması
-        // altında sunulur; CORS başlığı hiçbir zaman eklenmez — çapraz köken JS okuyamaz)
-        ("GET", "/api/token") => {
-            respond_json(
-                &mut writer,
-                200,
-                &serde_json::json!({ "token": state.token }),
-            )
-            .await
-        }
-
-        ("GET", "/api/stats") => match state.graph.stats() {
-            Ok(s) => respond_json(&mut writer, 200, &s).await,
-            Err(e) => {
-                respond_json(
-                    &mut writer,
-                    500,
-                    &serde_json::json!({"error": e.to_string()}),
-                )
-                .await
+        ("GET", "/api/stats") => {
+            if !token_ok(&state.token, req_token) {
+                return respond(&mut writer, 401, "text/plain", b"missing or invalid token
+").await;
             }
-        },
+            match state.graph.stats() {
+                Ok(s) => respond_json(&mut writer, 200, &s).await,
+                Err(e) => {
+                    respond_json(
+                        &mut writer,
+                        500,
+                        &serde_json::json!({"error": e.to_string()}),
+                    )
+                    .await
+                }
+            }
+        }
         ("GET", "/api/query") => {
-            let params = parse_query(query.as_deref());
-            let q = params
+            if !token_ok(&state.token, req_token) {
+                return respond(&mut writer, 401, "text/plain", b"missing or invalid token
+").await;
+            }
+            let q = q_params
                 .get("q")
                 .cloned()
                 .unwrap_or_else(|| "recent".to_string());
-            let limit = params
+            let limit = q_params
                 .get("limit")
                 .and_then(|v| v.parse::<u32>().ok())
                 .unwrap_or(50);
@@ -300,20 +308,10 @@ async fn handle_conn(
             if !origin_allowed(headers.get("origin").map(|s| s.as_str())) {
                 return respond(&mut writer, 403, "text/plain", b"forbidden origin\n").await;
             }
-            // Mutasyon koruması: token başlığı (Forget, ChipAct; Ask için de önerilir)
-            if path == "/api/forget" || path == "/api/chip-act" {
-                if !token_ok(
-                    &state.token,
-                    headers.get("x-thornhill-token").map(|s| s.as_str()),
-                ) {
-                    return respond(
-                        &mut writer,
-                        401,
-                        "text/plain",
-                        b"missing or invalid token\n",
-                    )
-                    .await;
-                }
+            // Tüm isteklerde token doğrulaması zorunludur
+            if !token_ok(&state.token, req_token) {
+                return respond(&mut writer, 401, "text/plain", b"missing or invalid token
+").await;
             }
             let v: serde_json::Value = match serde_json::from_slice(&body) {
                 Ok(v) => v,
