@@ -1,27 +1,9 @@
-# Nix
+# Nix Derleme ve Ortam Ciktilari
 result
 result-*
+.cache/
 .direnv/
 
-# Rust / Cargo
+# Rust ve Cargo Derleme Ciktilari
 /target/
 **/*.rs.bk
-
-# SQLite local runtime data
-*.db
-*.db-wal
-*.db-shm
-*.sqlite
-*.sqlite3
-
-# Sockets and Runtime
-*.sock
-/run/
-
-# Editor & OS
-.DS_Store
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
