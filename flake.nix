@@ -77,6 +77,14 @@
             };
 
             config = lib.mkIf cfg.enable {
+              environment.systemPackages = [ cfg.package ];
+              environment.pathsToLink = [ "/share/thornhill" ];
+              environment.interactiveShellInit = ''
+                if [ -f "/run/current-system/sw/share/thornhill/shell-hook/thornhill.sh" ]; then
+                  source "/run/current-system/sw/share/thornhill/shell-hook/thornhill.sh"
+                fi
+              '';
+
               systemd.user.services.thornhilld = {
                 description = "Enyxma Thornhill Cognitive Daemon";
                 wantedBy = [ "default.target" ];
