@@ -366,10 +366,12 @@ document.querySelectorAll("button.forget").forEach((b) => {
 (async function init() {
   const urlParams = new URLSearchParams(window.location.search);
   const qToken = urlParams.get("token");
-  if (qToken) {
-    sessionStorage.setItem("thornhill_token", qToken);
+  const metaToken = document.querySelector('meta[name="thornhill-token"]')?.content || "";
+  const initialToken = qToken || metaToken || sessionStorage.getItem("thornhill_token") || "";
+  if (initialToken) {
+    sessionStorage.setItem("thornhill_token", initialToken);
   }
-  window.__thToken = sessionStorage.getItem("thornhill_token") || "";
+  window.__thToken = initialToken;
   if (!window.__thToken) {
     const entered = prompt("Thornhill erişim token'ını giriniz:\n(Token dosyası: $XDG_RUNTIME_DIR/thornhill/http.token)");
     if (entered) {

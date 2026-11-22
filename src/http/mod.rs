@@ -658,7 +658,17 @@ async fn serve_static(
     };
 
     match bytes {
-        Some(b) => {
+        Some(mut b) => {
+            if safe == "index.html" {
+                if let Ok(html) = String::from_utf8(b.clone()) {
+                    let meta = format!(
+                        "<meta name=\"thornhill-token\" content=\"{}\"></head>",
+                        state.token
+                    );
+                    let patched = html.replacen("</head>", &meta, 1);
+                    b = patched.into_bytes();
+                }
+            }
             let mime = match safe.rsplit('.').next() {
                 Some("html") => "text/html; charset=utf-8",
                 Some("css") => "text/css; charset=utf-8",

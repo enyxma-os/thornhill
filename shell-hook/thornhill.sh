@@ -64,6 +64,7 @@ elif [[ -n "$BASH_VERSION" ]]; then
     fi
     __thornhill_report "$code" "$cmd"
     __THORNHILL_LAST_CMD=""
+    return "$code"
   }
   trap '__thornhill_preexec_bash' DEBUG
   [[ -n "$PROMPT_COMMAND" ]] \
