@@ -156,7 +156,23 @@ impl HttpServer {
                 return Err(e.into());
             }
         };
-        let listener = TcpListener::bind(&addr).await?;
+        let listener = {
+            let mut attempt = 0u8;
+            loop {
+                match TcpListener::bind(&addr).await {
+                    Ok(l) => break l,
+                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && attempt < 4 => {
+                        attempt += 1;
+                        warn!(
+                            "Web konsolu portu meşgul: {} — yeniden deneniyor {}/5",
+                            addr, attempt
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        };
         info!(
             "🌐 Web konsolu: http://{} (token: $XDG_RUNTIME_DIR/thornhill/http.token)",
             addr
@@ -244,8 +260,14 @@ async fn handle_conn(
     // SSE: canlı olay ve çip akışı
     if path == "/api/stream" && method == "GET" {
         if !token_ok(&state.token, req_token) {
-            return respond(&mut writer, 401, "text/plain", b"missing or invalid token
-").await;
+            return respond(
+                &mut writer,
+                401,
+                "text/plain",
+                b"missing or invalid token
+",
+            )
+            .await;
         }
         return stream_sse(writer, state).await;
     }
@@ -260,8 +282,14 @@ async fn handle_conn(
 
         ("GET", "/api/stats") => {
             if !token_ok(&state.token, req_token) {
-                return respond(&mut writer, 401, "text/plain", b"missing or invalid token
-").await;
+                return respond(
+                    &mut writer,
+                    401,
+                    "text/plain",
+                    b"missing or invalid token
+",
+                )
+                .await;
             }
             match state.graph.stats() {
                 Ok(s) => respond_json(&mut writer, 200, &s).await,
@@ -277,8 +305,14 @@ async fn handle_conn(
         }
         ("GET", "/api/query") => {
             if !token_ok(&state.token, req_token) {
-                return respond(&mut writer, 401, "text/plain", b"missing or invalid token
-").await;
+                return respond(
+                    &mut writer,
+                    401,
+                    "text/plain",
+                    b"missing or invalid token
+",
+                )
+                .await;
             }
             let q = q_params
                 .get("q")
@@ -310,8 +344,14 @@ async fn handle_conn(
             }
             // Tüm isteklerde token doğrulaması zorunludur
             if !token_ok(&state.token, req_token) {
-                return respond(&mut writer, 401, "text/plain", b"missing or invalid token
-").await;
+                return respond(
+                    &mut writer,
+                    401,
+                    "text/plain",
+                    b"missing or invalid token
+",
+                )
+                .await;
             }
             let v: serde_json::Value = match serde_json::from_slice(&body) {
                 Ok(v) => v,

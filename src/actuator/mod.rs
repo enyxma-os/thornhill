@@ -208,6 +208,48 @@ pub async fn execute_action(action: &ChipAction, _chip: &ActionChip) -> Outcome 
             }
         }
 
+        "copy" => {
+            let text = action
+                .payload
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if text.is_empty() {
+                return Outcome::Refused {
+                    reason: "copy eyleminde text boş".into(),
+                };
+            }
+            let child = tokio::process::Command::new("wl-copy")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn();
+            match child {
+                Ok(mut proc) => {
+                    use tokio::io::AsyncWriteExt;
+                    if let Some(mut stdin) = proc.stdin.take() {
+                        let _ = stdin.write_all(text.as_bytes()).await;
+                    }
+                    match timeout(EXEC_TIMEOUT, proc.wait_with_output()).await {
+                        Ok(Ok(out)) if out.status.success() => Outcome::DryRunOk {
+                            note: "Panoya kopyalandı".into(),
+                        },
+                        Ok(Ok(out)) => Outcome::Refused {
+                            reason: format!(
+                                "wl-copy hatası: {}",
+                                String::from_utf8_lossy(&out.stderr)
+                            ),
+                        },
+                        _ => Outcome::Refused {
+                            reason: "wl-copy timeout".into(),
+                        },
+                    }
+                }
+                Err(e) => Outcome::Refused {
+                    reason: format!("wl-copy başlatılamadı: {}", e),
+                },
+            }
+        }
         other => Outcome::Refused {
             reason: format!("bilinmeyen eylem türü: {}", other),
         },
@@ -269,5 +311,18 @@ mod tests {
     #[test]
     fn ladder_allows_none() {
         assert!(matches!(ladder_check("none", false), Decision::Allow));
+    }
+
+    #[tokio::test]
+    async fn copy_refuses_empty_text() {
+        let action = ChipAction {
+            label: "Kopyala".into(),
+            action_type: "copy".into(),
+            risk: "none".into(),
+            payload: serde_json::json!({ "text": "" }),
+        };
+        let c = chip(1000);
+        let outcome = execute_action(&action, &c).await;
+        assert!(matches!(outcome, Outcome::Refused { .. }));
     }
 }

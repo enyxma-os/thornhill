@@ -7,10 +7,13 @@
 #   izin vermez ve ENXIO döner. Yeni desende her üç kabuk aynı yolu kullanır:
 #   hata anında `thornhill-ctl inject` arka planda çalışır ( Soket yoksa 0 ms ).
 #
-# Kurallar (RFC-001 §4.1 / Aksiyom 2):
-#   - Yalnızca exit_code != 0 iken yazar (gürültü kontrolü).
-#   - thornhill-ctl yolda yoksa / soket yoksa sessizce pas geçer.
-#   - Sabit kullanıcı yolu YOK: $XDG_RUNTIME_DIR'den çözülür (ADR-062).
+# Kurallar:
+#   - Yalnızca exit_code != 0 iken yazar.
+#   - thornhill-ctl yolda yoksa veya soket yoksa sessizce pas geçer.
+#   - Sabit kullanıcı yolu YOK: $XDG_RUNTIME_DIR üzerinden çözülür.
+
+[[ -n "${__THORNHILL_HOOK_LOADED:-}" ]] && return 0
+__THORNHILL_HOOK_LOADED=1
 
 __thornhill_escape() {
   # JSON'a güvenli gömme: ters bölü + tırnak + satır sonu temizliği, 200 bayt kesme
@@ -53,7 +56,7 @@ elif [[ -n "$BASH_VERSION" ]]; then
     esac
   }
   __thornhill_report_bash()  {
-    local code="${STARSHIP_CMD_STATUS:-$?}"
+    local code=$?
     local cmd="$__THORNHILL_LAST_CMD"
     if [[ -z "$cmd" || "$cmd" == *"starship"* || "$cmd" == *"__thornhill"* || "$cmd" == *"__zoxide"* ]]; then
       cmd=$(fc -ln -1 2>/dev/null | sed -e 's/^[[:space:]]*//')

@@ -92,13 +92,24 @@ impl BusServer {
                         }
                         let relevant = matches!(
                             kind.as_str(),
-                            "git.dirty" | "git.commit" | "fs.write" | "proc.exec"
+                            "git.dirty"
+                                | "git.commit"
+                                | "fs.write"
+                                | "proc.exec"
+                                | "cmd.done"
+                                | "win.focus"
+                                | "ws.change"
                         );
                         if relevant {
-                            if let Ok(support) = self.graph.link(pid, &event.id, "caused", 0.5) {
+                            let rel = if kind == "cmd.done" {
+                                "repeated_failure"
+                            } else {
+                                "caused"
+                            };
+                            if let Ok(support) = self.graph.link(pid, &event.id, rel, 0.5) {
                                 debug!(
-                                    "§6.3 kenar: {} → {} (support={})",
-                                    kind, event.kind, support
+                                    "§6.3 kenar: {} → {} [{}] support={}",
+                                    kind, event.kind, rel, support
                                 );
                                 if support >= crate::graph::db::LESSON_SUPPORT_THRESHOLD {
                                     let pattern = format!("{}->{}", kind, event.kind);
