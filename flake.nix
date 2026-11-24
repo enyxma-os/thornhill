@@ -57,7 +57,7 @@
 
           meta = with pkgs.lib; {
             description = "Ambient cognitive backbone: sensory tap, causal graph, dual-mind reflex engine, ambient web console";
-            license = licenses.mit;
+            license = licenses.gpl3Plus;
             platforms = platforms.linux;
             mainProgram = "thornhilld";
           };

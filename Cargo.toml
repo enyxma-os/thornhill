@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Enyxma OS Contributors"]
 description = "Ambient cognitive backbone: sensory tap, causal graph, dual-mind reflex engine"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }

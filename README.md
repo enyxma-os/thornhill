@@ -3,7 +3,7 @@
 Linux masaüstünde sistem olaylarını izleyen, olaylar arasında neden-sonuç bağı kuran ve bu bağlardan türeyen eylem kartlarını kullanıcı onayına sunan, Rust ile yazılmış yerel servis.
 
 - Depo: https://codeberg.org/enyxma/thornhill
-- Lisans: MIT
+- Lisans: GPL-3.0-or-later — [LICENSE](./LICENSE)
 - Dil: Rust, asenkron tokio çalışma zamanı
 - Üretilen ikililer: `thornhilld` (servis) ve `thornhill-ctl` (komut satırı aracı)
 - Paketleme: Nix Flake; `packages.default`, `nixosModules.default` ve `homeManagerModules.default` çıktıları
